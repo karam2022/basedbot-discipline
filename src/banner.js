@@ -32,27 +32,31 @@ BBD.banner = (() => {
     if (el) el.style.display = 'none';
   };
 
-  const render = (top, extraCount, settings) => {
-    const el = ensureEl();
-    const stale = Date.now() - top.ts > BBD.STALE_MS;
-    const usd = top.usd ? ` (${top.usd})` : '';
-    const staleNote = stale ? ' · stale, open Portfolio to refresh' : '';
-    const more = extraCount > 0 ? ` · +${extraCount} more in profit` : '';
-    el.innerHTML = '';
+  const MAX_ROWS = 3;
 
-    const msg = document.createElement('span');
+  // One row per profitable position (capped), each with its own snooze and
+  // dismiss — holding several winners must not hide all but the biggest.
+  const renderRow = (pos, settings) => {
+    const row = document.createElement('div');
+    row.className = 'bbd-banner-row';
+
+    const stale = Date.now() - pos.ts > BBD.STALE_MS;
+    const usd = pos.usd ? ` (${pos.usd})` : '';
+    const msg = document.createElement(pos.chain ? 'a' : 'span');
     msg.className = 'bbd-banner-msg';
+    if (pos.chain) msg.href = `/token/${pos.chain}/${pos.addr}`;
     msg.textContent =
-      `🟢 ${top.symbol} is +${top.pct}%${usd} — you told yourself you'd take profit.${more}${staleNote}`;
+      `🟢 ${BBD.sanitizeAlertText(pos.symbol, 20) || pos.addr.slice(0, 8)} +${pos.pct}%${usd}` +
+      `${stale ? ' · stale' : ''} — take profit.`;
 
     const snoozeBtn = document.createElement('button');
     snoozeBtn.type = 'button';
     snoozeBtn.textContent = `Snooze ${settings.snoozeMin}m`;
     snoozeBtn.addEventListener('click', async () => {
       await BBD.store.mergeEntry(
-        BBD.KEYS.snoozes, top.addr, Date.now() + settings.snoozeMin * 60 * 1000
+        BBD.KEYS.snoozes, pos.addr, Date.now() + settings.snoozeMin * 60 * 1000
       );
-      hide();
+      BBD.banner.tick();
     });
 
     const dismissBtn = document.createElement('button');
@@ -60,11 +64,24 @@ BBD.banner = (() => {
     dismissBtn.textContent = 'Dismiss';
     dismissBtn.title = `Re-fires if it climbs another ${settings.refireStepPct} points`;
     dismissBtn.addEventListener('click', async () => {
-      await BBD.store.mergeEntry(BBD.KEYS.dismissed, top.addr, top.pct);
-      hide();
+      await BBD.store.mergeEntry(BBD.KEYS.dismissed, pos.addr, pos.pct);
+      BBD.banner.tick();
     });
 
-    el.append(msg, snoozeBtn, dismissBtn);
+    row.append(msg, snoozeBtn, dismissBtn);
+    return row;
+  };
+
+  const render = (hits, settings) => {
+    const el = ensureEl();
+    el.innerHTML = '';
+    hits.slice(0, MAX_ROWS).forEach((pos) => el.append(renderRow(pos, settings)));
+    if (hits.length > MAX_ROWS) {
+      const more = document.createElement('div');
+      more.className = 'bbd-banner-more';
+      more.textContent = `…and ${hits.length - MAX_ROWS} more in profit — open Portfolio.`;
+      el.append(more);
+    }
     el.style.display = 'flex';
   };
 
@@ -104,8 +121,8 @@ BBD.banner = (() => {
         hide();
         return;
       }
-      render(hits[0], hits.length - 1, settings);
-      maybeNotify(hits[0], settings);
+      render(hits, settings);
+      hits.forEach((hit) => maybeNotify(hit, settings));
     } catch (err) {
       console.warn('[bbd] banner tick failed', err);
     }
