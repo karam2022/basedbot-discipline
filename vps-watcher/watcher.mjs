@@ -155,12 +155,22 @@ const scanPage = () => {
       const symIdx = leaves.indexOf(symbol);
       let name = symIdx >= 0 ? (leaves[symIdx + 1] || '') : '';
       if (name.startsWith('/') || name === symbol) name = '';
+      // Market context from the card: age, market cap, volume, tx count.
+      const after = (label) => {
+        const i = leaves.indexOf(label);
+        return i >= 0 ? (leaves[i + 1] || '') : '';
+      };
+      const age = leaves.find((t) => /^\d+(?:\.\d+)?[smhd]$/.test(t)) || '?';
+      const mc = after('MC');
+      const vol = after('V');
+      const tx = after('TX');
       hot.push({
         addr: addrOf(c.getAttribute('href')),
         symbol,
         name,
         level,
-        stats: `top10 ${s.top10}% · dev ${s.dev}% · snipers ${s.snipers}% · ` +
+        market: `${age} old · MC ${mc || '?'} · vol ${vol || '?'} · ${tx || '?'} tx`,
+        stats: `top10 ${s.top10}% · dev ${s.dev}% · snipers ${s.snipers}% · bundlers ${s.bundlers}% · ` +
           `insiders ${s.insiders}% · ${s.holders} holders (${Math.round(ratio * 100)}% pro)`
       });
     }
@@ -285,7 +295,7 @@ const tick = async () => {
         const body = t.level === 'hot'
           ? 'passes every safety metric with real utility signals.'
           : 'passes every safety metric, has a website, thinner utility proof — DYOR.';
-        const ok = await sendTelegram(`${head}\n${label}\n${body}\n${t.stats}\n${url}`);
+        const ok = await sendTelegram(`${head}\n${label}\n${body}\n${t.market}\n${t.stats}\n${url}`);
         if (ok) console.log(`[watcher] alerted ${t.level} ${t.symbol} on ${chain}`);
         seen[t.addr] = { ts: Date.now(), level: t.level };
         // Persist immediately — a crash mid-tick must never forget a sent
