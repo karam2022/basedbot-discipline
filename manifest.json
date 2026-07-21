@@ -1,0 +1,31 @@
+{
+  "manifest_version": 3,
+  "name": "BasedBot Discipline",
+  "version": "1.7.1",
+  "description": "Hides meme coins on basedbot Pulse and nags you to take profit when positions are in the green.",
+  "permissions": ["storage", "notifications"],
+  "host_permissions": ["https://basedbot.app/*", "https://api.telegram.org/*"],
+  "background": { "service_worker": "background.js" },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "BasedBot Discipline"
+  },
+  "icons": { "128": "icons/icon128.png" },
+  "content_scripts": [
+    {
+      "matches": ["https://basedbot.app/*"],
+      "js": [
+        "src/constants.js",
+        "src/store.js",
+        "src/score.js",
+        "src/filter.js",
+        "src/intel.js",
+        "src/pnl.js",
+        "src/banner.js",
+        "src/main.js"
+      ],
+      "css": ["styles.css"],
+      "run_at": "document_idle"
+    }
+  ]
+}

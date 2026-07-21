@@ -1,0 +1,4 @@
+node_modules/
+vps-watcher/config.json
+vps-watcher/seen.json
+.DS_Store

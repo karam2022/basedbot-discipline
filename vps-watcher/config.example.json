@@ -1,0 +1,10 @@
+{
+  "tgToken": "PASTE_BOTFATHER_TOKEN",
+  "tgChatId": "PASTE_YOUR_CHAT_ID",
+  "chains": [
+    "robinhood"
+  ],
+  "realertHours": 24,
+  "intervalSec": 30,
+  "reloadMin": 30
+}

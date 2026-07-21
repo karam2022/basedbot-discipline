@@ -1,0 +1,237 @@
+// Meme-coin filter + gem highlighter for Pulse pages. Cards are
+// <a href="/token/...">; launchpad badges are <img alt> values after the
+// token logo; social links carry title attributes (Website, GitHub, Docs...).
+'use strict';
+
+BBD.filter = (() => {
+  let hiddenCount = 0;
+  let gemCount = 0;
+  let hotCount = 0;
+  let peeking = false;
+  const hotSeen = new Set(); // addrs already notified this session
+
+  const isPulse = () => location.pathname.startsWith('/pulse');
+
+  const cardInfo = (card) => {
+    const addr = BBD.tokenAddrFromHref(card.getAttribute('href') || '');
+    const alts = [...card.querySelectorAll('img')]
+      .map((img) => (img.alt || '').trim())
+      .filter(Boolean);
+    const symbol = alts[0] || ''; // the token logo's alt is the symbol
+    const badges = alts.slice(1);
+    const titles = [...card.querySelectorAll('[title]')]
+      .map((el) => (el.getAttribute('title') || '').trim())
+      .filter(Boolean);
+    const lines = card.innerText.split('\n').map((s) => s.trim()).filter(Boolean);
+    const nameBlob = lines.slice(0, 2).join(' ').toLowerCase();
+    return { addr, symbol, badges, titles, nameBlob };
+  };
+
+  // On-card stat row, verified positional order (checked against the Token
+  // Info panel): holders, proTraders, Top10%, Dev%, Snipers%, Bundlers%,
+  // Insiders%, then a Paid/No dex-paid badge. Returns null when the row
+  // hasn't rendered yet (brand-new pairs).
+  const parseCardStats = (card) => {
+    const leaves = [...card.querySelectorAll('span,div')]
+      .filter((el) => el.childElementCount === 0)
+      .map((el) => el.textContent.trim())
+      .filter(Boolean);
+    const pctNum = (t) => (t.startsWith('<') ? 0.5 : Number(t.replace('%', '')));
+    const countNum = (t) => {
+      const m = t.match(/^([\d.]+)(K|M)?$/);
+      if (!m) return null;
+      const mult = m[2] === 'M' ? 1e6 : m[2] === 'K' ? 1e3 : 1;
+      return Number(m[1]) * mult;
+    };
+    const pctIdx = leaves
+      .map((t, i) => (/^<?\d+(\.\d+)?%$/.test(t) ? i : -1))
+      .filter((i) => i >= 0);
+    if (pctIdx.length < 5) return null;
+    const last5 = pctIdx.slice(-5);
+    const [top10, dev, snipers, bundlers, insiders] = last5.map((i) => pctNum(leaves[i]));
+    const holders = countNum(leaves[last5[0] - 2] || '');
+    const pro = countNum(leaves[last5[0] - 1] || '');
+    const paid = leaves.includes('Paid');
+    if (holders === null || pro === null) return null;
+    return { holders, pro, top10, dev, snipers, bundlers, insiders, paid };
+  };
+
+  const isHot = (stats, utilityScore, settings) => {
+    if (!settings.hotEnabled || !stats || !stats.paid) return false;
+    const proRatio = stats.holders > 0 ? stats.pro / stats.holders : 0;
+    return (
+      utilityScore >= settings.hotMinUtilityScore &&
+      stats.top10 <= settings.hotMaxTop10 &&
+      stats.dev <= settings.hotMaxDev &&
+      stats.snipers <= settings.hotMaxSnipers &&
+      stats.bundlers <= settings.hotMaxBundlers &&
+      stats.insiders <= settings.hotMaxInsiders &&
+      stats.holders >= settings.hotMinHolders &&
+      proRatio >= settings.hotMinProRatio &&
+      proRatio <= settings.hotMaxProRatio
+    );
+  };
+
+  // Cached token-page intel sweetens the score for tokens you've inspected:
+  // LP burned/locked and renounced contracts are signals cards can't show.
+  const intelBonus = (addr, intel) => {
+    const m = addr && intel[addr];
+    if (!m) return 0;
+    let bonus = 0;
+    if (m.lpBurned >= 50 || m.lpLocked >= 50) bonus += 2;
+    if (m.renounced === true) bonus += 1;
+    return bonus;
+  };
+
+  // Returns 'show' | 'hide' | 'gem' | 'hot'.
+  const classify = (card, info, settings, overrides, positions, intel) => {
+    const stats = parseCardStats(card);
+    // Social evidence only — clean holder stats must never buy a meme into 🔥
+    // (PONSINU lesson), so the stat bonus counts toward hide/gem but not hot.
+    const social = BBD.scoreCard(info, settings) + intelBonus(info.addr, intel);
+    const score = social + BBD.statBonus(stats);
+    const kwHit = BBD.hasMemeKeyword(info.nameBlob, settings.memeKeywords);
+    const hot = !kwHit && isHot(stats, social, settings);
+    const gem = score >= settings.gemMinScore;
+    const positive = hot ? 'hot' : gem ? 'gem' : 'show';
+    if (info.addr && positions[info.addr]) return positive; // held: never hide
+    if (info.addr && overrides[info.addr] === 'show') return positive;
+    if (info.addr && overrides[info.addr] === 'hide') return 'hide';
+    if (hot || gem) return positive;
+    // Meme-named tokens hide regardless; anything with a real web presence
+    // never hides — utility is shown and risk-ranked, not censored.
+    if (kwHit) return 'hide';
+    if (info.titles.some((t) => BBD.UTILITY_TITLES.includes(t))) return 'show';
+    return score < settings.minScore ? 'hide' : 'show';
+  };
+
+  const ensureChip = () => {
+    let chip = document.getElementById('bbd-filter-chip');
+    if (chip && chip.isConnected) return chip;
+    chip = document.createElement('button');
+    chip.id = 'bbd-filter-chip';
+    chip.type = 'button';
+    chip.addEventListener('click', () => {
+      peeking = !peeking;
+      document.documentElement.classList.toggle('bbd-peek', peeking);
+      render();
+    });
+    document.body.appendChild(chip);
+    return chip;
+  };
+
+  const ensureOverrideBtn = (card, info, state) => {
+    if (!info.addr) return;
+    let btn = card.querySelector('.bbd-override');
+    if (!btn) {
+      btn = document.createElement('button');
+      btn.className = 'bbd-override';
+      btn.type = 'button';
+      btn.addEventListener('click', async (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        const wantedState = card.classList.contains('bbd-hidden') ? 'show' : 'hide';
+        await BBD.store.mergeEntry(BBD.KEYS.overrides, info.addr, wantedState);
+        BBD.filter.scan();
+      });
+      card.style.position = 'relative';
+      card.appendChild(btn);
+    }
+    btn.textContent = state === 'hide' ? '✓ keep' : '🚫';
+    btn.title = state === 'hide' ? 'Always show this token' : 'Always hide this token';
+  };
+
+  const render = () => {
+    const chip = ensureChip();
+    const gems = gemCount > 0 ? ` · ${gemCount} 💎` : '';
+    const hots = hotCount > 0 ? ` · ${hotCount} 🔥` : '';
+    chip.textContent = peeking
+      ? `👁 peeking · ${hiddenCount} memecoins — hide again${gems}${hots}`
+      : `🚫 ${hiddenCount} memecoins hidden${gems}${hots}`;
+    chip.style.display =
+      isPulse() && (hiddenCount > 0 || gemCount > 0 || hotCount > 0) ? 'block' : 'none';
+  };
+
+  // 🔥 alerts go to Telegram ONLY (background routes on target) — Chrome
+  // notifications are reserved for take-profit on held positions.
+  // Dedupe persists in storage (in-memory alone forgets on every tab reload
+  // and re-spams the same tokens).
+  const ALERT_TTL_MS = 24 * 3600 * 1000;
+  const notifyHot = async (info, settings, stats) => {
+    if (!settings.laptopHotAlerts) return;
+    if (!info.addr || hotSeen.has(info.addr)) return;
+    hotSeen.add(info.addr);
+    const alerted = await BBD.store.get(BBD.KEYS.alerted, {});
+    if (alerted[info.addr] && Date.now() - alerted[info.addr] < ALERT_TTL_MS) return;
+    await BBD.store.mergeEntry(BBD.KEYS.alerted, info.addr, Date.now());
+    const chain = (location.pathname.match(/^\/pulse\/([^/]+)/) || [])[1];
+    const statLine = stats
+      ? ` top10 ${stats.top10}% · dev ${stats.dev}% · snipers ${stats.snipers}% · ` +
+        `insiders ${stats.insiders}% · ${stats.holders} holders.`
+      : '';
+    try {
+      chrome.runtime.sendMessage({
+        type: 'bbd-notify',
+        target: 'telegram',
+        title: '🔥 Best guess on Pulse (laptop)',
+        message: `${info.symbol || info.addr.slice(0, 8)} passes every safety metric.${statLine}`,
+        url: chain ? `${location.origin}/token/${chain}/${info.addr}` : undefined
+      });
+    } catch (err) {
+      console.warn('[bbd] hot notify failed', err);
+    }
+  };
+
+  const scan = async () => {
+    if (!isPulse()) {
+      teardown();
+      return;
+    }
+    const settings = await BBD.store.settings();
+    if (!settings.filterEnabled) {
+      teardown();
+      return;
+    }
+    const [overrides, positions, intel] = await Promise.all([
+      BBD.store.get(BBD.KEYS.overrides, {}),
+      BBD.store.get(BBD.KEYS.positions, {}),
+      BBD.store.get(BBD.KEYS.intel, {})
+    ]);
+    const cards = [...document.querySelectorAll('a[href*="/token/"]')]
+      .filter((a) => BBD.tokenAddrFromHref(a.getAttribute('href') || ''));
+    let hidden = 0;
+    let gems = 0;
+    let hots = 0;
+    for (const card of cards) {
+      const info = cardInfo(card);
+      const state = classify(card, info, settings, overrides, positions, intel);
+      card.classList.toggle('bbd-hidden', state === 'hide');
+      card.classList.toggle('bbd-gem', state === 'gem');
+      card.classList.toggle('bbd-hot', state === 'hot');
+      if (state === 'hide') hidden += 1;
+      if (state === 'gem') gems += 1;
+      if (state === 'hot') {
+        hots += 1;
+        notifyHot(info, settings, parseCardStats(card));
+      }
+      ensureOverrideBtn(card, info, state);
+    }
+    hiddenCount = hidden;
+    gemCount = gems;
+    hotCount = hots;
+    render();
+  };
+
+  const teardown = () => {
+    document.querySelectorAll('.bbd-hidden, .bbd-gem, .bbd-hot').forEach((el) => {
+      el.classList.remove('bbd-hidden', 'bbd-gem', 'bbd-hot');
+    });
+    const chip = document.getElementById('bbd-filter-chip');
+    if (chip) chip.style.display = 'none';
+    hiddenCount = 0;
+    gemCount = 0;
+    hotCount = 0;
+  };
+
+  return { scan, teardown };
+})();

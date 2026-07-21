@@ -1,0 +1,17 @@
+[Unit]
+Description=BasedBot best-guess watcher (Telegram alerts)
+After=network-online.target
+
+[Service]
+WorkingDirectory=/root/basedbot-watcher
+ExecStart=/usr/bin/env node watcher.mjs
+Restart=always
+RestartSec=30
+# Keep Chromium polite: max ~1.5 cores, low priority, hard memory ceiling —
+# production services on this box always win the CPU race.
+CPUQuota=50%
+Nice=10
+MemoryMax=3G
+
+[Install]
+WantedBy=multi-user.target

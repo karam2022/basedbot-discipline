@@ -1,0 +1,96 @@
+// Shared constants for all content scripts (loaded first, shared scope).
+'use strict';
+
+const BBD = {};
+
+BBD.DEFAULT_SETTINGS = Object.freeze({
+  filterEnabled: true,
+  reminderEnabled: true,
+  notifyEnabled: false,
+  thresholdPct: 20,
+  snoozeMin: 15,
+  refireStepPct: 10,
+  // Utility-score thresholds: hide below minScore, flag gems at gemMinScore.
+  minScore: 2,
+  gemMinScore: 4,
+  // 🔥 best-guess highlight: card must pass every on-card safety metric AND
+  // carry a utility signal. Thresholds derived from the profile shared by
+  // verified runners (PONS, Index, wire) vs farms (RYFT: top10 82%, insiders 67%).
+  hotEnabled: true,
+  // Laptop-side 🔥 Telegram sends. Turn OFF if a VPS watcher already covers
+  // discovery — otherwise both sources alert the same token once each.
+  laptopHotAlerts: true,
+  hotMaxTop10: 30,
+  hotMaxDev: 2,
+  hotMaxSnipers: 15,
+  hotMaxBundlers: 15,
+  hotMaxInsiders: 20,
+  hotMinHolders: 100,
+  hotMinProRatio: 0.05,
+  hotMaxProRatio: 0.6,
+  hotMinUtilityScore: 2, // social/badge evidence only — stat bonus must NOT count toward this
+  // Launchpad badges (img alt values on Pulse cards) treated as meme sources.
+  memeBadges: ['Pons', 'bow.fun', 'Flap', 'Circus', 'Charms', 'Long.xyz', 'Bankr', 'Ape Store',
+    'Zora', 'Clanker', 'Flaunch', 'Stroid', 'Klik', 'Trench', 'Livo',
+    'Pump.fun', 'PumpFun', 'PumpSwap', 'Bags', 'Meteora DBC'],
+  // Name/ticker fragments that mark a token as a meme coin.
+  memeKeywords: [
+    'pepe', 'inu', 'doge', 'shib', 'wif', 'bonk', 'elon', 'trump', 'moon',
+    'wojak', 'chad', 'frog', 'cat', 'dog', 'kitty', 'pup', 'baby', 'fart',
+    'butt', 'cum', 'tendies', 'rug', 'ape', 'monke', 'gigachad', 'meme'
+  ]
+});
+
+// chrome.storage.local keys.
+BBD.KEYS = Object.freeze({
+  settings: 'settings',   // user settings (merged over DEFAULT_SETTINGS)
+  positions: 'positions', // { [addr]: { symbol, pct, usd, ts } }
+  snoozes: 'snoozes',     // { [addr]: untilTimestampMs }
+  dismissed: 'dismissed', // { [addr]: pctAtDismissal }
+  overrides: 'overrides', // { [addr]: 'hide' | 'show' }
+  intel: 'intel',         // { [addr]: parsed Token Info metrics + ts }
+  alerted: 'alerted'      // { [addr]: ts } — 🔥 telegram dedupe, 24h TTL
+});
+
+BBD.STALE_MS = 30 * 60 * 1000;   // position data older than this is labeled stale
+BBD.SCAN_DEBOUNCE_MS = 300;
+BBD.POLL_MS = 5000;
+BBD.ROUTE_POLL_MS = 1000;
+
+// Short/ambiguous keywords need word boundaries so BUTTERCOIN doesn't match
+// "butt" or Catalyst "cat"; distinctive meme words still match as substrings
+// (catches concatenations like "catwifhat").
+BBD.AMBIGUOUS_KEYWORDS = Object.freeze([
+  'cat', 'dog', 'ape', 'butt', 'baby', 'moon', 'pup', 'rug', 'cum', 'meme', 'chad'
+]);
+
+BBD.hasMemeKeyword = (text, keywords) => keywords.some((kw) => {
+  if (!BBD.AMBIGUOUS_KEYWORDS.includes(kw)) return text.includes(kw);
+  return new RegExp(`(^|[^a-z0-9])${kw}([^a-z0-9]|$)`, 'i').test(text);
+});
+
+// Social-link titles that count as a real web presence — tokens carrying any
+// of these are never auto-hidden, only risk-ranked.
+BBD.UTILITY_TITLES = Object.freeze(['Website', 'GitHub', 'MCP', 'Docs', 'Medium', 'YouTube', 'Discord']);
+
+// False once the extension is reloaded/removed and this content script is an
+// orphan — every chrome.* call would throw from then on.
+BBD.alive = () => {
+  try {
+    return Boolean(chrome.runtime && chrome.runtime.id);
+  } catch (err) {
+    return false;
+  }
+};
+
+BBD.tokenAddrFromHref = (href) => {
+  if (typeof href !== 'string') return null;
+  const m = href.match(/\/token\/[^/]+\/(0x[a-fA-F0-9]{6,}|[1-9A-HJ-NP-Za-km-z]{20,})/);
+  return m ? m[1].toLowerCase() : null;
+};
+
+BBD.parsePct = (text) => {
+  if (typeof text !== 'string') return null;
+  const m = text.replace(/,/g, '').match(/\(?\s*([+-]?\d+(?:\.\d+)?)\s*%\s*\)?/);
+  return m ? Number(m[1]) : null;
+};
