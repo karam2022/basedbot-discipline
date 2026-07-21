@@ -86,9 +86,11 @@ const scanPage = () => {
   const GATES = { top10: 30, dev: 2, snipers: 15, bundlers: 15, insiders: 20, holders: 100 };
 
   const addrOf = (h) => {
-    // 0x… for EVM chains, base58 for Solana.
+    // 0x… (case-insensitive hex) lowercased for stable keys; base58 Solana
+    // addresses are case-SENSITIVE and must keep their original case (#5).
     const m = (h || '').match(/\/token\/[^/]+\/(0x[a-fA-F0-9]{6,}|[1-9A-HJ-NP-Za-km-z]{20,})/);
-    return m ? m[1].toLowerCase() : null;
+    if (!m) return null;
+    return m[1].startsWith('0x') ? m[1].toLowerCase() : m[1];
   };
   const hasKw = (t) => KW.some((kw) => AMB.includes(kw)
     ? new RegExp(`(^|[^a-z0-9])${kw}([^a-z0-9]|$)`, 'i').test(t)
@@ -104,8 +106,12 @@ const scanPage = () => {
     };
     const pctIdx = leaves.map((t, i) => (/^<?\d+(\.\d+)?%$/.test(t) ? i : -1)).filter((i) => i >= 0);
     if (pctIdx.length < 5) return null;
+    // Layout canary (#6): refuse to score unrecognizable card shapes rather
+    // than silently mislabel the positional stats.
+    if (pctIdx.length > 8) return null;
     const last5 = pctIdx.slice(-5);
     const [top10, dev, snipers, bundlers, insiders] = last5.map((i) => pctNum(leaves[i]));
+    if ([top10, dev, snipers, bundlers, insiders].some((v) => !(v >= 0 && v <= 100))) return null;
     const holders = countNum(leaves[last5[0] - 2] || '');
     const pro = countNum(leaves[last5[0] - 1] || '');
     if (holders === null || pro === null) return null;
@@ -115,6 +121,7 @@ const scanPage = () => {
   const cards = [...document.querySelectorAll('a[href*="/token/"]')]
     .filter((a) => addrOf(a.getAttribute('href')));
   const hot = [];
+  let withStats = 0;
   for (const c of cards) {
     const alts = [...c.querySelectorAll('img')].map((i) => (i.alt || '').trim()).filter(Boolean);
     const symbol = alts[0] || '';
@@ -128,6 +135,7 @@ const scanPage = () => {
     if (hasKw(blob)) score -= 3;
     titles.forEach((t) => { if (typeof SW[t] === 'number') score += SW[t]; });
     const s = parseStats(c);
+    if (s) withStats += 1;
     if (!s || !s.paid) continue;
     if (hasKw(blob)) continue; // meme-named: never alertable, however clean
     const ratio = s.holders > 0 ? s.pro / s.holders : 0;
@@ -157,7 +165,20 @@ const scanPage = () => {
       });
     }
   }
-  return hot;
+  return { hot, cardCount: cards.length, withStats };
+};
+
+// Page-controlled token text must never carry URLs/handles/RTL tricks into
+// the trusted alert channel (#8). Mirrors the extension's sanitizer.
+const sanitizeAlertText = (text, maxLen = 48) => {
+  if (typeof text !== 'string') return '';
+  return text
+    .replace(/[\u0000-\u001f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g, '')
+    .replace(/(?:https?:\/\/|www\.|t\.me\/|@)\S+/gi, '')
+    .replace(/\S+\.(?:com|io|net|org|app|xyz|fun|finance|trade|money|st)\b\S*/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, maxLen);
 };
 
 // Full Chromium + realistic fingerprint: the headless-shell build gets stuck
@@ -217,6 +238,8 @@ const start = async () => {
 };
 
 let ticking = false;
+const noStatsStreak = new Map(); // chain -> consecutive ticks with 0 parsed stats
+const layoutWarnedFor = new Set();
 const tick = async () => {
   if (ticking) return; // never overlap
   ticking = true;
@@ -224,14 +247,27 @@ const tick = async () => {
     await discoverChatId();
     const seen = loadJson(SEEN_PATH, {});
     for (const chain of CHAINS) {
-      let hot;
+      let result;
       try {
-        hot = await pages.get(chain).evaluate(scanPage);
+        result = await pages.get(chain).evaluate(scanPage);
       } catch (err) {
         console.error(`[watcher] ${chain} page died (${err.message.slice(0, 60)}) — reopening`);
         try { await pages.get(chain)?.context().close(); } catch (e) { /* gone */ }
         await openChain(chain);
         continue;
+      }
+      const { hot, cardCount, withStats } = result;
+      // Layout-drift alarm (#6): a populated feed where nothing parses means
+      // basedbot changed their cards — say so once instead of going silent.
+      if (cardCount >= 20 && withStats === 0) {
+        const streak = (noStatsStreak.get(chain) || 0) + 1;
+        noStatsStreak.set(chain, streak);
+        if (streak >= 20 && !layoutWarnedFor.has(chain)) {
+          layoutWarnedFor.add(chain);
+          await sendTelegram(`⚠️ ${chain}: cards render but stats no longer parse — basedbot may have changed their card layout. Scoring is effectively paused on this chain until the watcher is updated.`);
+        }
+      } else {
+        noStatsStreak.set(chain, 0);
       }
       for (const t of hot) {
         // seen entries: {ts, level}. A 💎 that later earns 🔥 re-alerts as the upgrade.
@@ -240,7 +276,9 @@ const tick = async () => {
         const upgraded = prior && prior.level === 'gem' && t.level === 'hot';
         if (prior && !upgraded && Date.now() - prior.ts < REALERT_MS) continue;
         const url = `https://basedbot.app/token/${chain}/${t.addr}`;
-        const label = t.name ? `${t.symbol} — ${t.name}` : (t.symbol || t.addr.slice(0, 10));
+        const sym = sanitizeAlertText(t.symbol, 20);
+        const nm = sanitizeAlertText(t.name, 40);
+        const label = nm ? `${sym} — ${nm}` : (sym || t.addr.slice(0, 10));
         const head = t.level === 'hot'
           ? `🔥 Best guess on Pulse (${chain})${upgraded ? ' — upgraded from 💎' : ''}`
           : `💎 Possible gem on Pulse (${chain})`;

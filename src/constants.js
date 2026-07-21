@@ -86,7 +86,24 @@ BBD.alive = () => {
 BBD.tokenAddrFromHref = (href) => {
   if (typeof href !== 'string') return null;
   const m = href.match(/\/token\/[^/]+\/(0x[a-fA-F0-9]{6,}|[1-9A-HJ-NP-Za-km-z]{20,})/);
-  return m ? m[1].toLowerCase() : null;
+  if (!m) return null;
+  // Hex EVM addresses are case-insensitive — normalize for stable map keys.
+  // Base58 Solana addresses are case-SENSITIVE — lowercasing breaks URLs (#5).
+  return m[1].startsWith('0x') ? m[1].toLowerCase() : m[1];
+};
+
+// Page-controlled text (token symbols/names) goes into Telegram messages and
+// notification titles. Strip anything that could turn our own alert channel
+// into a phishing surface: URLs, handles, control/RTL-override chars (#8).
+BBD.sanitizeAlertText = (text, maxLen = 48) => {
+  if (typeof text !== 'string') return '';
+  return text
+    .replace(/[\u0000-\u001f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g, '')
+    .replace(/(?:https?:\/\/|www\.|t\.me\/|@)\S+/gi, '')
+    .replace(/\S+\.(?:com|io|net|org|app|xyz|fun|finance|trade|money|st)\b\S*/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, maxLen);
 };
 
 BBD.parsePct = (text) => {

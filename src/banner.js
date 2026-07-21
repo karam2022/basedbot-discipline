@@ -68,13 +68,17 @@ BBD.banner = (() => {
     el.style.display = 'flex';
   };
 
+  // The in-memory set only rate-limits messages per page load; the background
+  // worker owns the real cross-load dedupe (re-alert only on refire-step climb
+  // or after 24h) so reloading pages doesn't re-spam (#1).
   const maybeNotify = (top, settings) => {
     if (!settings.notifyEnabled || notified.has(top.addr)) return;
     notified.add(top.addr);
     try {
       chrome.runtime.sendMessage({
         type: 'bbd-notify',
-        title: `${top.symbol} +${top.pct}%`,
+        dedupe: { key: `tp:${top.addr}`, pct: top.pct },
+        title: `${BBD.sanitizeAlertText(top.symbol, 20) || top.addr.slice(0, 8)} +${top.pct}%`,
         message: 'Position crossed your take-profit threshold on basedbot.',
         url: top.chain ? `${location.origin}/token/${top.chain}/${top.addr}` : undefined
       });

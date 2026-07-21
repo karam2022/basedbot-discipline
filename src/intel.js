@@ -21,8 +21,13 @@ BBD.intel = (() => {
     return m ? Number(m[1]) * (m[2] === 'M' ? 1e6 : m[2] === 'K' ? 1e3 : 1) : null;
   };
 
-  const expandPanel = () => {
+  // Auto-expand at most once per token per page session (#7): if the user
+  // collapses the panel afterwards, that's their call — don't fight them.
+  const autoExpanded = new Set();
+  const expandPanel = (addr) => {
     if (document.body.innerText.includes('Top 10 H.')) return;
+    if (addr && autoExpanded.has(addr)) return;
+    if (addr) autoExpanded.add(addr);
     [...document.querySelectorAll('div,button,span')]
       .filter((el) => el.textContent.trim() === 'Token Info' && el.childElementCount <= 1)
       .forEach((el) => el.click());
@@ -95,11 +100,11 @@ BBD.intel = (() => {
     }
     try {
       const settings = await BBD.store.settings();
-      expandPanel();
+      const addr = BBD.tokenAddrFromHref(location.pathname);
+      expandPanel(addr);
       const metrics = parsePanel();
       if (!metrics) return;
       renderVerdict(runChecks(metrics, settings));
-      const addr = BBD.tokenAddrFromHref(location.pathname);
       if (addr) await BBD.store.mergeEntry(BBD.KEYS.intel, addr, metrics);
     } catch (err) {
       console.warn('[bbd] intel scan failed', err);

@@ -107,6 +107,8 @@ const init = async () => {
     $(id).addEventListener('change', () => {
       const value = Number($(id).value);
       const mustBePositive = id === 'thresholdPct' || id === 'snoozeMin';
+      // gemMinScore floor: 0 would mark every visible token a gem (#7).
+      if (id === 'gemMinScore' && value < 1) return;
       if (Number.isFinite(value) && (!mustBePositive || value > 0)) {
         saveSettings({ [id]: value });
       }

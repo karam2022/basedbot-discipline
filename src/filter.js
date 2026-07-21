@@ -47,13 +47,29 @@ BBD.filter = (() => {
       .map((t, i) => (/^<?\d+(\.\d+)?%$/.test(t) ? i : -1))
       .filter((i) => i >= 0);
     if (pctIdx.length < 5) return null;
+    // Layout canary (#6): the positional mapping assumes a known card shape.
+    // If basedbot adds stats or values go absurd, refuse to score rather than
+    // silently mislabel snipers as insiders.
+    if (pctIdx.length > 8) return layoutSuspect('too many % values on card');
     const last5 = pctIdx.slice(-5);
     const [top10, dev, snipers, bundlers, insiders] = last5.map((i) => pctNum(leaves[i]));
+    if ([top10, dev, snipers, bundlers, insiders].some((v) => !(v >= 0 && v <= 100))) {
+      return layoutSuspect('percentage out of 0-100 range');
+    }
     const holders = countNum(leaves[last5[0] - 2] || '');
     const pro = countNum(leaves[last5[0] - 1] || '');
     const paid = leaves.includes('Paid');
     if (holders === null || pro === null) return null;
     return { holders, pro, top10, dev, snipers, bundlers, insiders, paid };
+  };
+
+  let layoutWarned = false;
+  const layoutSuspect = (why) => {
+    if (!layoutWarned) {
+      layoutWarned = true;
+      console.warn(`[bbd] card layout changed? (${why}) — stat scoring disabled for unmatched cards`);
+    }
+    return null;
   };
 
   const isHot = (stats, utilityScore, settings) => {
@@ -83,9 +99,9 @@ BBD.filter = (() => {
     return bonus;
   };
 
-  // Returns 'show' | 'hide' | 'gem' | 'hot'.
-  const classify = (card, info, settings, overrides, positions, intel) => {
-    const stats = parseCardStats(card);
+  // Returns 'show' | 'hide' | 'gem' | 'hot'. Stats computed once by the
+  // caller (#7) and shared with the alert path.
+  const classify = (stats, info, settings, overrides, positions, intel) => {
     // Social evidence only — clean holder stats must never buy a meme into 🔥
     // (PONSINU lesson), so the stat bonus counts toward hide/gem but not hot.
     const social = BBD.scoreCard(info, settings) + intelBonus(info.addr, intel);
@@ -120,6 +136,13 @@ BBD.filter = (() => {
     return chip;
   };
 
+  // DOM writes happen ONLY when the value changed (#4): setting textContent
+  // replaces a text node, which is a childList mutation our own observer sees
+  // — unconditional writes made every scan schedule the next one, forever.
+  const setText = (el, text) => {
+    if (el.textContent !== text) el.textContent = text;
+  };
+
   const ensureOverrideBtn = (card, info, state) => {
     if (!info.addr) return;
     let btn = card.querySelector('.bbd-override');
@@ -137,44 +160,44 @@ BBD.filter = (() => {
       card.style.position = 'relative';
       card.appendChild(btn);
     }
-    btn.textContent = state === 'hide' ? '✓ keep' : '🚫';
-    btn.title = state === 'hide' ? 'Always show this token' : 'Always hide this token';
+    setText(btn, state === 'hide' ? '✓ keep' : '🚫');
+    const title = state === 'hide' ? 'Always show this token' : 'Always hide this token';
+    if (btn.title !== title) btn.title = title;
   };
 
   const render = () => {
     const chip = ensureChip();
     const gems = gemCount > 0 ? ` · ${gemCount} 💎` : '';
     const hots = hotCount > 0 ? ` · ${hotCount} 🔥` : '';
-    chip.textContent = peeking
+    setText(chip, peeking
       ? `👁 peeking · ${hiddenCount} memecoins — hide again${gems}${hots}`
-      : `🚫 ${hiddenCount} memecoins hidden${gems}${hots}`;
-    chip.style.display =
+      : `🚫 ${hiddenCount} memecoins hidden${gems}${hots}`);
+    const display =
       isPulse() && (hiddenCount > 0 || gemCount > 0 || hotCount > 0) ? 'block' : 'none';
+    if (chip.style.display !== display) chip.style.display = display;
   };
 
   // 🔥 alerts go to Telegram ONLY (background routes on target) — Chrome
   // notifications are reserved for take-profit on held positions.
-  // Dedupe persists in storage (in-memory alone forgets on every tab reload
-  // and re-spams the same tokens).
-  const ALERT_TTL_MS = 24 * 3600 * 1000;
-  const notifyHot = async (info, settings, stats) => {
+  // Real dedupe lives in the background worker, which serializes checks across
+  // all tabs (#3); hotSeen just avoids re-messaging every scan pass.
+  const notifyHot = (info, settings, stats) => {
     if (!settings.laptopHotAlerts) return;
     if (!info.addr || hotSeen.has(info.addr)) return;
     hotSeen.add(info.addr);
-    const alerted = await BBD.store.get(BBD.KEYS.alerted, {});
-    if (alerted[info.addr] && Date.now() - alerted[info.addr] < ALERT_TTL_MS) return;
-    await BBD.store.mergeEntry(BBD.KEYS.alerted, info.addr, Date.now());
     const chain = (location.pathname.match(/^\/pulse\/([^/]+)/) || [])[1];
     const statLine = stats
       ? ` top10 ${stats.top10}% · dev ${stats.dev}% · snipers ${stats.snipers}% · ` +
         `insiders ${stats.insiders}% · ${stats.holders} holders.`
       : '';
+    const symbol = BBD.sanitizeAlertText(info.symbol, 20) || info.addr.slice(0, 8);
     try {
       chrome.runtime.sendMessage({
         type: 'bbd-notify',
         target: 'telegram',
+        dedupe: { key: `hot:${info.addr}` },
         title: '🔥 Best guess on Pulse (laptop)',
-        message: `${info.symbol || info.addr.slice(0, 8)} passes every safety metric.${statLine}`,
+        message: `${symbol} passes every safety metric.${statLine}`,
         url: chain ? `${location.origin}/token/${chain}/${info.addr}` : undefined
       });
     } catch (err) {
@@ -197,14 +220,19 @@ BBD.filter = (() => {
       BBD.store.get(BBD.KEYS.positions, {}),
       BBD.store.get(BBD.KEYS.intel, {})
     ]);
-    const cards = [...document.querySelectorAll('a[href*="/token/"]')]
+    // Scope to the Pulse feed columns only (#9): search results, address
+    // matches and sidebars render OUTSIDE the grid and must never be hidden —
+    // the user explicitly asked to see those.
+    const feedRoot = document.querySelector('.grid-cols-3') || document;
+    const cards = [...feedRoot.querySelectorAll('a[href*="/token/"]')]
       .filter((a) => BBD.tokenAddrFromHref(a.getAttribute('href') || ''));
     let hidden = 0;
     let gems = 0;
     let hots = 0;
     for (const card of cards) {
       const info = cardInfo(card);
-      const state = classify(card, info, settings, overrides, positions, intel);
+      const stats = parseCardStats(card);
+      const state = classify(stats, info, settings, overrides, positions, intel);
       card.classList.toggle('bbd-hidden', state === 'hide');
       card.classList.toggle('bbd-gem', state === 'gem');
       card.classList.toggle('bbd-hot', state === 'hot');
@@ -212,9 +240,16 @@ BBD.filter = (() => {
       if (state === 'gem') gems += 1;
       if (state === 'hot') {
         hots += 1;
-        notifyHot(info, settings, parseCardStats(card));
+        notifyHot(info, settings, stats);
       }
       ensureOverrideBtn(card, info, state);
+    }
+    // Anything marked outside the feed (stale classes, search overlays) gets
+    // unmarked — only feed cards may ever be hidden.
+    if (feedRoot !== document) {
+      document.querySelectorAll('.bbd-hidden, .bbd-gem, .bbd-hot').forEach((el) => {
+        if (!feedRoot.contains(el)) el.classList.remove('bbd-hidden', 'bbd-gem', 'bbd-hot');
+      });
     }
     hiddenCount = hidden;
     gemCount = gems;

@@ -91,6 +91,10 @@
     console.warn('[bbd] storage listener failed', err);
   }
 
+  // Storage housekeeping: at startup and hourly (#2).
+  BBD.store.pruneAll();
+  intervals.push(setInterval(guard(() => BBD.store.pruneAll()), 3600 * 1000));
+
   lastPath = location.pathname;
   ensureRefreshBtn();
   runForRoute();
