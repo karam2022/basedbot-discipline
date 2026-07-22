@@ -14,9 +14,16 @@
   "content_scripts": [
     {
       "matches": ["https://basedbot.app/*"],
+      "js": ["src/interceptor.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["https://basedbot.app/*"],
       "js": [
         "src/constants.js",
         "src/store.js",
+        "src/feed.js",
         "src/score.js",
         "src/filter.js",
         "src/intel.js",

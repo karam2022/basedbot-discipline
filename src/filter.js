@@ -19,14 +19,20 @@ BBD.filter = (() => {
       .filter(Boolean);
     const symbol = alts[0] || ''; // the token logo's alt is the symbol
     const badges = alts.slice(1);
-    const titles = [...card.querySelectorAll('[title]')]
-      .map((el) => (el.getAttribute('title') || '').trim())
-      .filter(Boolean);
+    // Social evidence from the card's [title] icons, unioned with the links
+    // the metadata API reported (cards truncate icons; the API doesn't).
+    const titles = [...new Set([
+      ...[...card.querySelectorAll('[title]')]
+        .map((el) => (el.getAttribute('title') || '').trim())
+        .filter(Boolean),
+      ...BBD.feed.titlesFor(addr)
+    ])];
     const lines = card.innerText.split('\n').map((s) => s.trim()).filter(Boolean);
     const nameBlob = lines.slice(0, 2).join(' ').toLowerCase();
     return { addr, symbol, badges, titles, nameBlob };
   };
 
+  // DOM fallback for when the API cache misses (BBD.feed.statsFor is primary).
   // On-card stat row, verified positional order (checked against the Token
   // Info panel): holders, proTraders, Top10%, Dev%, Snipers%, Bundlers%,
   // Insiders%, then a Paid/No dex-paid badge. Returns null when the row
@@ -231,7 +237,9 @@ BBD.filter = (() => {
     let hots = 0;
     for (const card of cards) {
       const info = cardInfo(card);
-      const stats = parseCardStats(card);
+      // API cache (immune to layout changes) is primary; the positional DOM
+      // parser is the fallback for cards no batch has covered yet.
+      const stats = BBD.feed.statsFor(info.addr) || parseCardStats(card);
       const state = classify(stats, info, settings, overrides, positions, intel);
       card.classList.toggle('bbd-hidden', state === 'hide');
       card.classList.toggle('bbd-gem', state === 'gem');
