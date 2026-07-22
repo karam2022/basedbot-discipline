@@ -36,6 +36,7 @@
   <label><input type="checkbox" id="hotEnabled" /> 🔥 Best-guess highlight</label>
   <label><input type="checkbox" id="laptopHotAlerts" /> 🔥 Telegram alerts from this laptop
     <span class="hint">(turn off if a VPS watcher covers you)</span></label>
+  <label><input type="checkbox" id="creatorGuardEnabled" /> ⚠️ Flag repeat-offender devs</label>
   <label><input type="checkbox" id="reminderEnabled" /> Take-profit reminders</label>
   <label><input type="checkbox" id="notifyEnabled" /> Chrome notifications</label>
 
@@ -48,6 +49,13 @@
   <label>Flag 💎 gems at score ≥ <input type="number" id="gemMinScore" min="0" max="20" /></label>
   <div class="hint">Score = launchpad (meme pad −3, Virtual +1) + socials (GitHub/MCP +4,
   Docs +3, Website/Discord/Medium/YouTube +1) − meme keywords (−3).</div>
+
+  <h2>Creator guard</h2>
+  <label>Flag dev after <input type="number" id="creatorMaxLaunches" min="1" max="100" /> launches</label>
+  <label>…or after <input type="number" id="creatorMaxRugs" min="1" max="100" /> rugs</label>
+  <div class="hint">Learns from tokens you browse: a dev who serially launches, or
+  whose past tokens pumped then lost their liquidity, gets an ⚠️ marker and can't
+  earn 🔥. Data comes from the metrics API (creator address) + observed market cap.</div>
 
   <h2>Meme launchpad badges to hide</h2>
   <div class="badge-row" id="badges"></div>

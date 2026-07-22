@@ -106,14 +106,17 @@ BBD.filter = (() => {
   };
 
   // Returns 'show' | 'hide' | 'gem' | 'hot'. Stats computed once by the
-  // caller (#7) and shared with the alert path.
-  const classify = (stats, info, settings, overrides, positions, intel) => {
+  // caller (#7) and shared with the alert path; badDev (creator-guard verdict)
+  // is likewise computed once so the class toggle and score agree.
+  const classify = (stats, info, settings, overrides, positions, intel, badDev) => {
     // Social evidence only — clean holder stats must never buy a meme into 🔥
     // (PONSINU lesson), so the stat bonus counts toward hide/gem but not hot.
     const social = BBD.scoreCard(info, settings) + intelBonus(info.addr, intel);
-    const score = social + BBD.statBonus(stats);
+    const score = social + BBD.statBonus(stats) + (badDev ? BBD.BAD_CREATOR_PENALTY : 0);
     const kwHit = BBD.hasMemeKeyword(info.nameBlob, settings.memeKeywords);
-    const hot = !kwHit && isHot(stats, social, settings);
+    // A flagged creator can never buy a token into 🔥 — reputation outweighs
+    // a clean-looking holder snapshot (the snapshot is what ruggers optimize).
+    const hot = !kwHit && !badDev && isHot(stats, social, settings);
     const gem = score >= settings.gemMinScore;
     const positive = hot ? 'hot' : gem ? 'gem' : 'show';
     if (info.addr && positions[info.addr]) return positive; // held: never hide
@@ -240,10 +243,19 @@ BBD.filter = (() => {
       // API cache (immune to layout changes) is primary; the positional DOM
       // parser is the fallback for cards no batch has covered yet.
       const stats = BBD.feed.statsFor(info.addr) || parseCardStats(card);
-      const state = classify(stats, info, settings, overrides, positions, intel);
+      // Feed the creator-reputation model, then read its verdict for this card.
+      let badDev = false;
+      if (settings.creatorGuardEnabled && info.addr) {
+        BBD.creator.observe(info.addr, BBD.feed.creatorFor(info.addr), BBD.feed.marketFor(info.addr));
+        badDev = BBD.creator.isFlagged(info.addr, settings);
+      }
+      const state = classify(stats, info, settings, overrides, positions, intel, badDev);
       card.classList.toggle('bbd-hidden', state === 'hide');
       card.classList.toggle('bbd-gem', state === 'gem');
       card.classList.toggle('bbd-hot', state === 'hot');
+      // Warning marker is independent of hide/show: a held or user-kept token
+      // stays visible but still shows its dev is a repeat offender.
+      card.classList.toggle('bbd-baddev', badDev && state !== 'hide');
       if (state === 'hide') hidden += 1;
       if (state === 'gem') gems += 1;
       if (state === 'hot') {
@@ -255,8 +267,10 @@ BBD.filter = (() => {
     // Anything marked outside the feed (stale classes, search overlays) gets
     // unmarked — only feed cards may ever be hidden.
     if (feedRoot !== document) {
-      document.querySelectorAll('.bbd-hidden, .bbd-gem, .bbd-hot').forEach((el) => {
-        if (!feedRoot.contains(el)) el.classList.remove('bbd-hidden', 'bbd-gem', 'bbd-hot');
+      document.querySelectorAll('.bbd-hidden, .bbd-gem, .bbd-hot, .bbd-baddev').forEach((el) => {
+        if (!feedRoot.contains(el)) {
+          el.classList.remove('bbd-hidden', 'bbd-gem', 'bbd-hot', 'bbd-baddev');
+        }
       });
     }
     hiddenCount = hidden;
@@ -266,8 +280,8 @@ BBD.filter = (() => {
   };
 
   const teardown = () => {
-    document.querySelectorAll('.bbd-hidden, .bbd-gem, .bbd-hot').forEach((el) => {
-      el.classList.remove('bbd-hidden', 'bbd-gem', 'bbd-hot');
+    document.querySelectorAll('.bbd-hidden, .bbd-gem, .bbd-hot, .bbd-baddev').forEach((el) => {
+      el.classList.remove('bbd-hidden', 'bbd-gem', 'bbd-hot', 'bbd-baddev');
     });
     const chip = document.getElementById('bbd-filter-chip');
     if (chip) chip.style.display = 'none';

@@ -8,8 +8,10 @@ BBD.feed = (() => {
   // Stats gate 🔥 alerts — stale values must lose to a fresh DOM parse.
   const STATS_TTL_MS = 10 * 60 * 1000;
   const MAX_ENTRIES = 1500;
-  const stats = new Map();  // addr -> { holders, pro, top10, ..., paid, ts }
-  const titles = new Map(); // addr -> { list: ['Website', ...], ts }
+  const stats = new Map();   // addr -> { holders, pro, top10, ..., paid, ts }
+  const titles = new Map();  // addr -> { list: ['Website', ...], ts }
+  const creator = new Map(); // addr -> creatorAddress (for the creator guard)
+  const market = new Map();  // addr -> { liq, mcap, isLaunchpad, symbol, ts }
 
   // metadata/batch keys carry a chain suffix ("0x…-4663"); metrics keys don't.
   // Mirror tokenAddrFromHref (#5): lowercase hex EVM addresses for stable keys,
@@ -28,6 +30,12 @@ BBD.feed = (() => {
     const n = Number(v);
     return Number.isFinite(n) && n >= 0 ? n : null;
   };
+  const usd = (v) => {
+    const n = Number(v);
+    return Number.isFinite(n) && n >= 0 ? n : null;
+  };
+  // creatorAddress / token address share the EVM-lowercase, base58-preserve rule.
+  const isAddr = (v) => typeof v === 'string' && /^(0x[a-fA-F0-9]{6,}|[1-9A-HJ-NP-Za-km-z]{20,})$/.test(v);
 
   const prune = (map) => {
     if (map.size <= MAX_ENTRIES) return;
@@ -51,14 +59,38 @@ BBD.feed = (() => {
         paid: m.dexPaid === true,
         ts: Date.now()
       };
+      const addr = normAddr(key);
+      // creatorAddress rides on the metrics payload; cache it regardless of
+      // whether the stat block itself is complete (the creator guard wants it).
+      if (isAddr(m.creatorAddress)) creator.set(addr, normAddr(m.creatorAddress));
       // Same completeness bar as parseCardStats: partial stats can't be
       // trusted to gate safety checks — skip and let the DOM parser try.
       if (entry.holders === null || entry.pro === null) continue;
       if ([entry.top10, entry.dev, entry.snipers, entry.bundlers, entry.insiders]
         .some((v) => v === null)) continue;
-      stats.set(normAddr(key), entry);
+      stats.set(addr, entry);
     }
     prune(stats);
+    prune(creator);
+  };
+
+  // Feed list payload (/api/tokens): market cap + liquidity per token, the
+  // observed values the creator guard uses to detect a rug (peaked then died).
+  const takeList = (rows) => {
+    if (!Array.isArray(rows)) return;
+    for (const t of rows) {
+      if (!t || typeof t !== 'object' || !isAddr(t.address)) continue;
+      const liq = usd(t.liquidity_usd);
+      const mcap = usd(t.market_cap_usd);
+      if (liq === null && mcap === null) continue;
+      market.set(normAddr(t.address), {
+        liq, mcap,
+        isLaunchpad: t.is_launchpad === true,
+        symbol: typeof t.symbol === 'string' ? t.symbol : '',
+        ts: Date.now()
+      });
+    }
+    prune(market);
   };
 
   // Map metadata links onto the title vocabulary the DOM cards use, so
@@ -105,6 +137,7 @@ BBD.feed = (() => {
     if (!msg || msg.__bbd !== 'api' || !msg.data || typeof msg.data !== 'object') return;
     if (msg.kind === 'metrics') takeMetrics(msg.data);
     else if (msg.kind === 'metadata') takeMetadata(msg.data);
+    else if (msg.kind === 'list') takeList(msg.data);
   });
   // The load-time batches fired before this listener existed.
   window.postMessage({ __bbd: 'replay-request' }, location.origin);
@@ -116,6 +149,10 @@ BBD.feed = (() => {
   };
   // Social links never really expire; ts is only used for pruning.
   const titlesFor = (addr) => (addr && titles.get(addr)?.list) || [];
+  // Creator address and last-seen market for the creator guard. No TTL: these
+  // are reference facts, and the guard's own history is what carries meaning.
+  const creatorFor = (addr) => (addr && creator.get(addr)) || null;
+  const marketFor = (addr) => (addr && market.get(addr)) || null;
 
-  return { statsFor, titlesFor };
+  return { statsFor, titlesFor, creatorFor, marketFor };
 })();

@@ -10,7 +10,8 @@
 (() => {
   const WATCHED = [
     [/\/api\/tokens\/metrics\/batch$/, 'metrics'],
-    [/\/api\/tokens\/metadata(\/batch)?$/, 'metadata']
+    [/\/api\/tokens\/metadata(\/batch)?$/, 'metadata'],
+    [/\/api\/tokens$/, 'list'] // feed list: liquidity_usd, market_cap_usd per token
   ];
 
   // The ISOLATED-world listener attaches at document_idle, long after the

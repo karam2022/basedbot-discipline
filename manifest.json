@@ -24,6 +24,7 @@
         "src/constants.js",
         "src/store.js",
         "src/feed.js",
+        "src/creator.js",
         "src/score.js",
         "src/filter.js",
         "src/intel.js",

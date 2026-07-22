@@ -74,7 +74,16 @@ BBD.intel = (() => {
     ['Holders ≥100', m.holders === null ? null : m.holders >= settings.hotMinHolders]
   ];
 
-  const renderVerdict = (checks) => {
+  // One-line summary of the creator's track record, or '' when there's nothing
+  // worth saying (unknown dev, or a single clean launch).
+  const devNote = (rep) => {
+    if (!rep || !rep.creatorAddr || (!rep.flagged && rep.launchCount <= 1)) return '';
+    const launches = `${rep.launchCount} launch${rep.launchCount === 1 ? '' : 'es'}`;
+    const rugs = rep.ruggedCount ? `, ${rep.ruggedCount} rugged` : '';
+    return ` · 👤 dev: ${launches}${rugs}${rep.flagged ? ' ⚠️' : ''}`;
+  };
+
+  const renderVerdict = (checks, rep) => {
     let el = document.getElementById('bbd-intel');
     if (!el || !el.isConnected) {
       el = document.createElement('div');
@@ -83,12 +92,15 @@ BBD.intel = (() => {
     }
     const passed = checks.filter(([, v]) => v === true);
     const failed = checks.filter(([, v]) => v === false);
-    const cls = failed.length === 0 ? 'bbd-good' : failed.length <= 2 ? 'bbd-warn' : 'bbd-bad';
+    // A flagged creator forces the chip red even if the token's own snapshot
+    // looks clean — the whole point of the guard.
+    const cls = rep && rep.flagged ? 'bbd-bad'
+      : failed.length === 0 ? 'bbd-good' : failed.length <= 2 ? 'bbd-warn' : 'bbd-bad';
     el.className = cls;
     const failText = failed.length
       ? ' · ⚠️ ' + failed.map(([n]) => n).join(', ')
       : ' · clean';
-    el.textContent = `🛡 ${passed.length}/${checks.length - checks.filter(([, v]) => v === null).length} checks${failText}`;
+    el.textContent = `🛡 ${passed.length}/${checks.length - checks.filter(([, v]) => v === null).length} checks${failText}${devNote(rep)}`;
     el.style.display = 'block';
   };
 
@@ -104,7 +116,13 @@ BBD.intel = (() => {
       expandPanel(addr);
       const metrics = parsePanel();
       if (!metrics) return;
-      renderVerdict(runChecks(metrics, settings));
+      // Record this token under its creator, then read the dev's track record.
+      let rep = null;
+      if (addr && settings.creatorGuardEnabled) {
+        BBD.creator.observe(addr, BBD.feed.creatorFor(addr), BBD.feed.marketFor(addr));
+        rep = BBD.creator.verdictFor(addr, settings);
+      }
+      renderVerdict(runChecks(metrics, settings), rep);
       if (addr) await BBD.store.mergeEntry(BBD.KEYS.intel, addr, metrics);
     } catch (err) {
       console.warn('[bbd] intel scan failed', err);

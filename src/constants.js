@@ -29,6 +29,14 @@ BBD.DEFAULT_SETTINGS = Object.freeze({
   hotMinProRatio: 0.05,
   hotMaxProRatio: 0.6,
   hotMinUtilityScore: 2, // social/badge evidence only — stat bonus must NOT count toward this
+  // Dev/creator guard: flag tokens whose creator is a serial launcher or has
+  // rugged before. creatorAddress comes from the metrics API, joined with
+  // observed market cap/liquidity — a reputation signal no single card shows.
+  creatorGuardEnabled: true,
+  creatorMaxLaunches: 5,       // >= this many distinct observed tokens => serial farmer
+  creatorMaxRugs: 2,           // >= this many observed rugs => flagged
+  creatorRugMinPeakUsd: 8000,  // a token must have had a real market to count as a rug
+  creatorRugDeadLiqUsd: 800,   // ...and its liquidity must have since collapsed below this
   // Launchpad badges (img alt values on Pulse cards) treated as meme sources.
   memeBadges: ['Pons', 'bow.fun', 'Flap', 'Circus', 'Charms', 'Long.xyz', 'Bankr', 'Ape Store',
     'Zora', 'Clanker', 'Flaunch', 'Stroid', 'Klik', 'Trench', 'Livo',
@@ -49,8 +57,14 @@ BBD.KEYS = Object.freeze({
   dismissed: 'dismissed', // { [addr]: pctAtDismissal }
   overrides: 'overrides', // { [addr]: 'hide' | 'show' }
   intel: 'intel',         // { [addr]: parsed Token Info metrics + ts }
-  alerted: 'alerted'      // { [addr]: ts } — 🔥 telegram dedupe, 24h TTL
+  alerted: 'alerted',     // { [addr]: ts } — 🔥 telegram dedupe, 24h TTL
+  creators: 'creators'    // { [creatorAddr]: { tokens: { [addr]: {...} }, ts } }
 });
+
+// Score penalty for a card whose creator is a flagged serial launcher/rugger.
+// Applied in filter.classify (not scoreCard) since it needs the addr → creator
+// lookup; matches the launchpad-badge penalty in weight.
+BBD.BAD_CREATOR_PENALTY = -3;
 
 BBD.STALE_MS = 30 * 60 * 1000;   // position data older than this is labeled stale
 BBD.SCAN_DEBOUNCE_MS = 300;

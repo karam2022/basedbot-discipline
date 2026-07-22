@@ -13,10 +13,10 @@
     observer.disconnect();
     ['bbd-filter-chip', 'bbd-banner', 'bbd-refresh', 'bbd-intel']
       .forEach((id) => document.getElementById(id)?.remove());
-    document.querySelectorAll('.bbd-hidden, .bbd-gem, .bbd-hot, .bbd-override')
+    document.querySelectorAll('.bbd-hidden, .bbd-gem, .bbd-hot, .bbd-baddev, .bbd-override')
       .forEach((el) => {
         if (el.classList.contains('bbd-override')) el.remove();
-        else el.classList.remove('bbd-hidden', 'bbd-gem', 'bbd-hot');
+        else el.classList.remove('bbd-hidden', 'bbd-gem', 'bbd-hot', 'bbd-baddev');
       });
   };
   const guard = (fn) => () => {
@@ -98,6 +98,11 @@
   // Storage housekeeping: at startup and hourly (#2).
   BBD.store.pruneAll();
   intervals.push(setInterval(guard(() => BBD.store.pruneAll()), 3600 * 1000));
+
+  // Creator-reputation model lives in memory during a session; persist it on a
+  // slow cadence and when the tab goes away so observations survive a reload.
+  intervals.push(setInterval(guard(() => BBD.creator.flush()), 30 * 1000));
+  window.addEventListener('pagehide', () => BBD.creator.flush());
 
   lastPath = location.pathname;
   ensureRefreshBtn();

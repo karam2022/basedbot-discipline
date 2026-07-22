@@ -13,6 +13,9 @@ const DEFAULTS = {
   gemMinScore: 4,
   hotEnabled: true,
   laptopHotAlerts: true,
+  creatorGuardEnabled: true,
+  creatorMaxLaunches: 5,
+  creatorMaxRugs: 2,
   tgToken: '',
   tgChatId: '',
   memeBadges: ['Pons', 'bow.fun', 'Flap', 'Circus', 'Charms', 'Long.xyz', 'Bankr', 'Ape Store',
@@ -98,15 +101,16 @@ const renderOverrides = async () => {
 const init = async () => {
   const settings = await loadSettings();
 
-  for (const id of ['filterEnabled', 'hotEnabled', 'laptopHotAlerts', 'reminderEnabled', 'notifyEnabled']) {
+  for (const id of ['filterEnabled', 'hotEnabled', 'laptopHotAlerts', 'creatorGuardEnabled', 'reminderEnabled', 'notifyEnabled']) {
     $(id).checked = Boolean(settings[id]);
     $(id).addEventListener('change', () => saveSettings({ [id]: $(id).checked }));
   }
-  for (const id of ['thresholdPct', 'snoozeMin', 'minScore', 'gemMinScore']) {
+  for (const id of ['thresholdPct', 'snoozeMin', 'minScore', 'gemMinScore', 'creatorMaxLaunches', 'creatorMaxRugs']) {
     $(id).value = settings[id];
     $(id).addEventListener('change', () => {
       const value = Number($(id).value);
-      const mustBePositive = id === 'thresholdPct' || id === 'snoozeMin';
+      // These floor at 1; the rest may go to/through zero (or negative, minScore).
+      const mustBePositive = ['thresholdPct', 'snoozeMin', 'creatorMaxLaunches', 'creatorMaxRugs'].includes(id);
       // gemMinScore floor: 0 would mark every visible token a gem (#7).
       if (id === 'gemMinScore' && value < 1) return;
       if (Number.isFinite(value) && (!mustBePositive || value > 0)) {

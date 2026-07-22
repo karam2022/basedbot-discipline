@@ -98,6 +98,27 @@ a[href*="/token/"]:hover .bbd-override,
   filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.6));
 }
 
+/* Repeat-offender creator: amber warning tint + ⚠️ marker. Stays visible
+   (unlike hidden memes) so a known-bad dev is obvious rather than silently gone. */
+.bbd-baddev {
+  outline: 2px solid #f59e0b !important;
+  outline-offset: -2px;
+  border-radius: 8px;
+}
+.bbd-baddev::after {
+  content: '⚠️ dev';
+  position: absolute;
+  bottom: 4px;
+  left: 4px;
+  z-index: 9;
+  background: rgba(180, 83, 9, 0.9);
+  color: #fff7ed;
+  font: 700 9px/1.5 system-ui, sans-serif;
+  padding: 0 5px;
+  border-radius: 4px;
+  letter-spacing: 0.03em;
+}
+
 /* 🔥 Best-guess highlight: passes every on-card safety metric + utility signal */
 .bbd-hot {
   outline: 3px solid #22c55e !important;
