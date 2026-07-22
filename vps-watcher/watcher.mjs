@@ -20,6 +20,7 @@ const SEEN_PATH = join(ROOT, 'seen.json');
 const NAMES_PATH = join(ROOT, 'names.json');     // replica registry
 const TRACKED_PATH = join(ROOT, 'tracked.json'); // user-tracked tokens
 const OFFSET_PATH = join(ROOT, 'tg-offset.json');
+const WATCH_PATH = join(ROOT, 'watchwords.json'); // { word: { ts } }
 
 const loadJson = (path, fallback) => {
   try {
@@ -94,6 +95,33 @@ const pollUpdates = async () => {
   for (const u of j.result) {
     off.offset = u.update_id + 1;
     const txt = (u.message && u.message.text || '').trim().toLowerCase();
+    if (u.message && u.message.chat && txt.startsWith('/')) {
+      const reply = (text) => tg('sendMessage', { chat_id: u.message.chat.id, text });
+      const [cmdRaw, ...args] = txt.split(/\s+/);
+      const cmd = cmdRaw.split('@')[0];
+      if (cmd === '/watch' && args.length) {
+        const words = loadJson(WATCH_PATH, {});
+        for (const w of args.slice(0, 5)) {
+          const key = w.replace(/[^a-z0-9]/g, '');
+          if (key.length >= 2 && key.length <= 30) words[key] = { ts: Date.now() };
+        }
+        saveJson(WATCH_PATH, words);
+        await reply(`🔔 Watching: ${Object.keys(words).join(', ')}\nI'll alert on ANY new listing whose name or symbol contains a watchword — including fakes launched before an official token, so verify each against the project's own socials.`);
+        continue;
+      }
+      if (cmd === '/unwatch' && args.length) {
+        const words = loadJson(WATCH_PATH, {});
+        for (const w of args) delete words[w.replace(/[^a-z0-9]/g, '')];
+        saveJson(WATCH_PATH, words);
+        await reply(`Watchlist now: ${Object.keys(words).join(', ') || '(empty)'}`);
+        continue;
+      }
+      if (cmd === '/watchlist') {
+        const words = loadJson(WATCH_PATH, {});
+        await reply(`🔔 Watchwords: ${Object.keys(words).join(', ') || '(none — add with /watch GUSH)'}`);
+        continue;
+      }
+    }
     if (u.message && u.message.chat && txt === '/firehose') {
       tgFirehoseChatId = String(u.message.chat.id);
       saveJson(CONFIG_PATH, { ...config, tgChatId, tgFirehoseChatId });
@@ -360,7 +388,8 @@ const TIERS = {
   hot: { head: '🔥 Best guess', body: 'passes every safety metric with real utility signals.' },
   gem: { head: '💎 Possible gem', body: 'passes every safety metric, has a website, thinner proof — DYOR.' },
   band: { head: '🚀 Momentum', body: (c) => `entered the $${Math.round(BAND_MIN / 1000)}K–$${Math.round(BAND_MAX / 1000)}K band${hasKw(c.blob) ? ' (meme — you asked for these too)' : ''}.` },
-  fresh: { head: '🌱 New utility launch', body: 'brand-new, real web presence, not a name-replica. Stats may be raw — size accordingly.' }
+  fresh: { head: '🌱 New utility launch', body: 'brand-new, real web presence, not a name-replica. Stats may be raw — size accordingly.' },
+  watch: { head: '🔔 Watchword hit', body: (c) => `matches your watchword "${c.watchWord}". Official token may not be live yet — fakes launch first. Verify against the project's own socials before touching it.` }
 };
 
 const alertToken = async (chain, card, tier, extra = '', dest = 'quality') => {
@@ -540,6 +569,7 @@ const tick = async () => {
     await pollUpdates();
     const seen = loadJson(SEEN_PATH, {});
     const names = loadJson(NAMES_PATH, {});
+    const watchwords = loadJson(WATCH_PATH, {});
     for (const chain of CHAINS) {
       let result;
       try {
@@ -574,6 +604,15 @@ const tick = async () => {
 
         // tier decisions (a token can earn several over its life; dedupe per tier)
         const tiers = [];
+        const wnormS = normToken(card.symbol);
+        const wnormN = normToken(card.name);
+        for (const w of Object.keys(watchwords)) {
+          if ((wnormS && wnormS.includes(w)) || (wnormN && wnormN.includes(w))) {
+            card.watchWord = w.toUpperCase();
+            tiers.push('watch');
+            break;
+          }
+        }
         if (safe && !kw && score >= 2) tiers.push('hot');
         else if (safe && !kw && card.titles.includes('Website')) tiers.push('gem');
         if (mcUsd !== null && mcUsd >= BAND_MIN && mcUsd <= BAND_MAX) tiers.push('band');
@@ -639,7 +678,7 @@ const tick = async () => {
           const freshStrict = x.tier === 'fresh' && peek && peek.ok &&
             UTILITY_WORDS.test(peek.line) && txN >= 25;
           let dest = 'firehose';
-          if (x.tier === 'hot') dest = 'quality';
+          if (x.tier === 'hot' || x.tier === 'watch') dest = 'quality';
           else if (freshStrict) dest = 'quality';
           else if (x.tier === 'gem' && socialScore(x.card) >= 4) dest = 'quality';
           const crown = freshStrict ? ' 👑' : '';
