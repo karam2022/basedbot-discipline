@@ -14,6 +14,9 @@ BBD.DEFAULT_SETTINGS = Object.freeze({
   // stopLossPct so losers get cut, not just winners taken.
   stopLossEnabled: true,
   stopLossPct: 25,
+  // Trade journal: log every position's entry safety snapshot, peak, and
+  // realized exit so the popup can show win rate and profit given back.
+  journalEnabled: true,
   // Utility-score thresholds: hide below minScore, flag gems at gemMinScore.
   minScore: 2,
   gemMinScore: 4,
@@ -64,7 +67,8 @@ BBD.KEYS = Object.freeze({
   overrides: 'overrides', // { [addr]: 'hide' | 'show' }
   intel: 'intel',         // { [addr]: parsed Token Info metrics + ts }
   alerted: 'alerted',     // { [addr]: ts } — 🔥 telegram dedupe, 24h TTL
-  creators: 'creators'    // { [creatorAddr]: { tokens: { [addr]: {...} }, ts } }
+  creators: 'creators',   // { [creatorAddr]: { tokens: { [addr]: {...} }, ts } }
+  journal: 'journal'      // { [addr]: { symbol, openTs, closeTs, entryVerdict, peakPct, exitPct, status } }
 });
 
 // Score penalty for a card whose creator is a flagged serial launcher/rugger.

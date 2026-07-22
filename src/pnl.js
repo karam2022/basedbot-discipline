@@ -12,12 +12,15 @@ BBD.pnl = (() => {
       chain: chain || null,
       ts: Date.now()
     });
+    // Journal follows the same lifecycle the banner reads from.
+    await BBD.journal.onHeld(addr, { symbol, chain, pct });
   };
 
   const clearPosition = async (addr) => {
     if (!addr) return;
     const positions = await BBD.store.get(BBD.KEYS.positions, {});
     if (positions[addr]) await BBD.store.removeEntry(BBD.KEYS.positions, addr);
+    await BBD.journal.onClosed(addr);
   };
 
   // --- Token page: "Bought / Sold / Holding / Unrealized PnL" panel ---------

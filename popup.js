@@ -19,6 +19,7 @@ const DEFAULTS = {
   creatorGuardEnabled: true,
   creatorMaxLaunches: 5,
   creatorMaxRugs: 2,
+  journalEnabled: true,
   tgToken: '',
   tgChatId: '',
   memeBadges: ['Pons', 'bow.fun', 'Flap', 'Circus', 'Charms', 'Long.xyz', 'Bankr', 'Ape Store',
@@ -75,6 +76,54 @@ const renderBadges = (settings) => {
   }
 };
 
+// Standalone journal summary (popup has no access to the content-script BBD
+// namespace; keep this in sync with BBD.journal.summarize).
+const summarizeJournal = (journal) => {
+  const all = Object.values(journal || {});
+  const closed = all.filter((e) => e.status === 'closed' && typeof e.exitPct === 'number');
+  const n = closed.length;
+  const wins = closed.filter((e) => e.exitPct > 0).length;
+  const gb = closed.filter((e) => typeof e.peakPct === 'number' && e.peakPct > 0)
+    .map((e) => e.peakPct - e.exitPct);
+  const flagged = closed.filter((e) => e.entryVerdict && e.entryVerdict.devFlagged);
+  const flaggedLosses = flagged.filter((e) => e.exitPct <= 0).length;
+  const mean = (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
+  return {
+    openCount: all.filter((e) => e.status === 'open').length,
+    closedCount: n,
+    winRate: n ? Math.round((100 * wins) / n) : 0,
+    avgExitPct: Math.round(mean(closed.map((e) => e.exitPct))),
+    avgGiveBackPct: Math.round(mean(gb)),
+    flaggedCount: flagged.length,
+    flaggedLossRate: flagged.length ? Math.round((100 * flaggedLosses) / flagged.length) : 0
+  };
+};
+
+const renderJournal = async () => {
+  const res = await chrome.storage.local.get('journal');
+  const s = summarizeJournal(res.journal || {});
+  const wrap = $('journal');
+  wrap.innerHTML = '';
+  if (s.closedCount === 0) {
+    wrap.innerHTML = `<span class="hint">No closed trades yet${s.openCount ? ` · ${s.openCount} open` : ''}.</span>`;
+    return;
+  }
+  const line = (label, val) => {
+    const row = document.createElement('div');
+    const l = document.createElement('span');
+    l.textContent = label;
+    const v = document.createElement('span');
+    v.textContent = val;
+    row.append(l, v);
+    wrap.appendChild(row);
+  };
+  line('Closed trades', `${s.closedCount}${s.openCount ? ` (+${s.openCount} open)` : ''}`);
+  line('Win rate', `${s.winRate}%`);
+  line('Avg realized', `${s.avgExitPct >= 0 ? '+' : ''}${s.avgExitPct}%`);
+  line('Avg profit given back', `${s.avgGiveBackPct}%`);
+  if (s.flaggedCount) line('Flagged-dev buys', `${s.flaggedCount} · ${s.flaggedLossRate}% lost`);
+};
+
 const renderOverrides = async () => {
   const res = await chrome.storage.local.get('overrides');
   const overrides = res.overrides || {};
@@ -104,7 +153,7 @@ const renderOverrides = async () => {
 const init = async () => {
   const settings = await loadSettings();
 
-  for (const id of ['filterEnabled', 'cardIntelEnabled', 'hotEnabled', 'laptopHotAlerts', 'creatorGuardEnabled', 'reminderEnabled', 'stopLossEnabled', 'notifyEnabled']) {
+  for (const id of ['filterEnabled', 'cardIntelEnabled', 'hotEnabled', 'laptopHotAlerts', 'creatorGuardEnabled', 'reminderEnabled', 'stopLossEnabled', 'journalEnabled', 'notifyEnabled']) {
     $(id).checked = Boolean(settings[id]);
     $(id).addEventListener('change', () => saveSettings({ [id]: $(id).checked }));
   }
@@ -134,8 +183,18 @@ const init = async () => {
     saveSettings({ memeKeywords });
   });
 
+  const clearJournal = $('clearJournal');
+  if (clearJournal) {
+    clearJournal.addEventListener('click', async () => {
+      await chrome.storage.local.set({ journal: {} });
+      renderJournal();
+      flash('Journal cleared');
+    });
+  }
+
   renderBadges(settings);
   renderOverrides();
+  renderJournal();
 };
 
 init().catch((err) => {

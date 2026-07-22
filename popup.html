@@ -25,6 +25,11 @@
     .badge-row label.on { border-color: #ef4444; color: #fca5a5; }
     #overrides div { display: flex; justify-content: space-between; padding: 2px 0; }
     #overrides button { background: none; border: none; color: #ef4444; cursor: pointer; }
+    #journal div { display: flex; justify-content: space-between; padding: 2px 0; }
+    #journal div span:last-child { color: #22c55e; font-variant-numeric: tabular-nums; }
+    .link-btn { background: none; border: none; color: #64748b; cursor: pointer;
+      font: 11px system-ui, sans-serif; float: right; }
+    .link-btn:hover { color: #ef4444; }
     #status { color: #22c55e; height: 16px; margin-top: 8px; }
     .hint { color: #64748b; font-size: 11px; }
   </style>
@@ -40,6 +45,7 @@
   <label><input type="checkbox" id="creatorGuardEnabled" /> ⚠️ Flag repeat-offender devs</label>
   <label><input type="checkbox" id="reminderEnabled" /> Take-profit reminders</label>
   <label><input type="checkbox" id="stopLossEnabled" /> 🔴 Stop-loss nag (cut losers too)</label>
+  <label><input type="checkbox" id="journalEnabled" /> 📓 Trade journal</label>
   <label><input type="checkbox" id="notifyEnabled" /> Chrome notifications</label>
 
   <h2>Sell reminder</h2>
@@ -73,6 +79,13 @@
   <div class="hint">Create a bot with @BotFather, get your chat ID from @userinfobot,
   then message your bot once. 🔥 best guesses go ONLY here; take-profit alerts go
   here + Chrome notifications.</div>
+
+  <h2>Trade journal
+    <button id="clearJournal" type="button" class="link-btn">clear</button>
+  </h2>
+  <div id="journal"><span class="hint">No closed trades yet.</span></div>
+  <div class="hint">Learns from your positions: win rate, average realized PnL,
+  and how much peak profit you gave back by not taking it.</div>
 
   <h2>Your overrides</h2>
   <div id="overrides"><span class="hint">None yet.</span></div>

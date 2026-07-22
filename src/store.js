@@ -74,6 +74,11 @@ BBD.store = {
     // Creator reputation is long-lived by design; keep 30 days and cap the map
     // so a heavy Pulse browser can't grow it without bound.
     await this.pruneMap(BBD.KEYS.creators, { maxAgeMs: 30 * DAY, maxEntries: 2000 });
+    // Journal keeps a long history for the win-rate view; timestamp by close
+    // (falling back to open for still-running trades).
+    await this.pruneMap(BBD.KEYS.journal, {
+      maxAgeMs: 90 * DAY, maxEntries: 1000, tsOf: (v) => v && (v.closeTs || v.openTs)
+    });
     // snooze values are expiry timestamps: drop the expired
     const snoozes = await this.get(BBD.KEYS.snoozes, {});
     const liveSnoozes = Object.fromEntries(
