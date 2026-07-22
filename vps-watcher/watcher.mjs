@@ -72,10 +72,13 @@ const tg = async (method, payload) => {
 };
 
 let tgFirehoseChatId = config.tgFirehoseChatId || '';
+let tgTrackingChatId = config.tgTrackingChatId || '';
 // dest: 'quality' (default, your main chat) or 'firehose' (high-volume tiers).
 // Without a firehose chat configured, everything goes to the main chat.
 const sendTelegram = async (text, buttons, dest = 'quality') => {
-  const chat = dest === 'firehose' && tgFirehoseChatId ? tgFirehoseChatId : tgChatId;
+  const chat = dest === 'firehose' && tgFirehoseChatId ? tgFirehoseChatId
+    : dest === 'tracking' && tgTrackingChatId ? tgTrackingChatId
+      : tgChatId;
   if (!TG_TOKEN || !chat) return false;
   const payload = { chat_id: chat, text, disable_web_page_preview: true };
   if (buttons) payload.reply_markup = { inline_keyboard: buttons };
@@ -104,14 +107,15 @@ const pollUpdates = async () => {
       // /firehose may come from a new (unbound) group, but only from the OWNER:
       // in a private chat, chat id == user id, so tgChatId doubles as owner id.
       const fromOwner = String(u.message.from && u.message.from.id) === String(tgChatId);
-      const isFirehoseCmd = txt.split(/\s+/)[0].split('@')[0] === '/firehose';
-      if (!bound && !(isFirehoseCmd && fromOwner)) continue;
+      const cmd0 = txt.split(/\s+/)[0].split('@')[0];
+      const isBindCmd = cmd0 === '/firehose' || cmd0 === '/tracking';
+      if (!bound && !(isBindCmd && fromOwner)) continue;
       const reply = (text) => tg('sendMessage', { chat_id: u.message.chat.id, text });
       const [cmdRaw, ...args] = txt.split(/\s+/);
       const cmd = cmdRaw.split('@')[0];
       if (cmd === '/watch' && args.length) {
         const words = loadJson(WATCH_PATH, {});
-        for (const w of args.slice(0, 5)) {
+        for (const w of args.slice(0, 10)) {
           const key = w.replace(/[^a-z0-9]/g, '');
           if (key.length >= 2 && key.length <= 30) words[key] = { ts: Date.now() };
         }
@@ -128,9 +132,16 @@ const pollUpdates = async () => {
       }
       if (cmd === '/watchlist') {
         const words = loadJson(WATCH_PATH, {});
-        await reply(`🔔 Watchwords: ${Object.keys(words).join(', ') || '(none — add with /watch GUSH)'}`);
+        await reply(`🔔 Watchwords: ${Object.keys(words).join(', ') || '(none — add with /watch TOKEN)'}`);
         continue;
       }
+    }
+    if (u.message && u.message.chat && txt.split('@')[0] === '/tracking') {
+      tgTrackingChatId = String(u.message.chat.id);
+      saveJson(CONFIG_PATH, { ...config, tgChatId, tgFirehoseChatId, tgTrackingChatId });
+      await tg('sendMessage', { chat_id: tgTrackingChatId, text: '📍 This chat is now TRACKING — Track confirmations, ⚠️ exit warnings, and 🏁 auto-untracks land here.' });
+      console.log(`[watcher] tracking chat bound: ${tgTrackingChatId}`);
+      continue;
     }
     if (u.message && u.message.chat && txt === '/firehose') {
       tgFirehoseChatId = String(u.message.chat.id);
@@ -164,7 +175,7 @@ const handleCallback = async (cq) => {
     saveJson(TRACKED_PATH, tracked);
     console.log(`[watcher] tracking ${addr} on ${chain}`);
     await answer('📍 Tracking — exit watch armed');
-    await sendTelegram(`📍 Now tracking ${addr.slice(0, 10)}… on ${chain}. I'll warn you if holders bleed or the holder structure deteriorates. Auto-untracks in ${Math.round(TRACK_TTL_MS / 86400000)}d.`);
+    await sendTelegram(`📍 Now tracking ${addr.slice(0, 10)}… on ${chain}. I'll warn you if holders bleed or the holder structure deteriorates. Auto-untracks in ${Math.round(TRACK_TTL_MS / 86400000)}d.`, null, 'tracking');
   } else if (data === 'ign') {
     await answer('Ignored');
   }
@@ -460,7 +471,7 @@ const exitWatch = async () => {
     if (now - t.ts > TRACK_TTL_MS) {
       delete tracked[addr];
       dirty = true;
-      await sendTelegram(`🏁 Auto-untracked ${addr.slice(0, 10)}… (${t.chain}) after ${Math.round(TRACK_TTL_MS / 86400000)}d.`);
+      await sendTelegram(`🏁 Auto-untracked ${addr.slice(0, 10)}… (${t.chain}) after ${Math.round(TRACK_TTL_MS / 86400000)}d.`, null, 'tracking');
       continue;
     }
     (byChain[t.chain] = byChain[t.chain] || []).push(addr);
@@ -472,7 +483,7 @@ const exitWatch = async () => {
       if (!exitApiWarned) {
         exitApiWarned = true;
         console.error(`[watcher] metrics API returned ${res.error} — exit watch degraded`);
-        await sendTelegram(`⚠️ Exit watch: basedbot's metrics API refused the anonymous request (HTTP ${res.error}). Tracking still records, but deterioration alerts are degraded until this is resolved.`);
+        await sendTelegram(`⚠️ Exit watch: basedbot's metrics API refused the anonymous request (HTTP ${res.error}). Tracking still records, but deterioration alerts are degraded until this is resolved.`, null, 'tracking');
       }
       continue;
     }
@@ -510,7 +521,7 @@ const exitWatch = async () => {
       if (reasons.length) {
         t.lastExitAlert = now;
         await sendTelegram(
-          `⚠️ EXIT WATCH (${chain})\n${addr.slice(0, 12)}…\n${reasons.join('\n')}\nhttps://basedbot.app/token/${chain}/${addr}`);
+          `⚠️ EXIT WATCH (${chain})\n${addr.slice(0, 12)}…\n${reasons.join('\n')}\nhttps://basedbot.app/token/${chain}/${addr}`, null, 'tracking');
       }
     }
   }
