@@ -675,8 +675,16 @@ const tick = async () => {
             }
             flags.push(`🔗 ${x.card.website}`);
             flags.push(peek.ok ? `«${peek.line}»` : '⚠️ website unreachable');
-            if (peek.ok && !domainMatchesToken(x.card.website, x.card.symbol, x.card.name)) {
-              flags.push('⚠️ domain unrelated to token name (borrowed link?)');
+            const borrowed = peek.ok && !domainMatchesToken(x.card.website, x.card.symbol, x.card.name);
+            const memeSite = peek.ok && /\bmeme|knowyourmeme|coincommunities|linktr\.ee\b/i.test(peek.line + ' ' + x.card.website);
+            if (borrowed) flags.push('⚠️ domain unrelated to token name (borrowed link?)');
+            // 🌱 means "plausibly THEIR real site": a borrowed link or a site
+            // that self-describes as meme infrastructure fails the tier.
+            if (x.tier === 'fresh' && (borrowed || memeSite)) {
+              seen[key] = { ts: Date.now(), skipped: borrowed ? 'borrowed-link' : 'meme-site' };
+              saveJson(SEEN_PATH, seen);
+              console.log(`[watcher] skipped fresh ${x.card.symbol}: ${borrowed ? 'borrowed link' : 'meme site'}`);
+              continue;
             }
           } else if (x.tier === 'fresh') {
             // metadata says no website after all — card [title] was misleading
