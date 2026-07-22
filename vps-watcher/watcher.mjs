@@ -1,6 +1,12 @@
-// BasedBot 🔥 best-guess watcher — runs headless on a VPS, no wallet needed
-// (Pulse is public). Scans every INTERVAL_MIN minutes, Telegrams NEW tokens
-// that pass every safety metric. Mirrors the extension's v1.6 hot logic.
+// BasedBot watcher — runs headless on a VPS, no wallet needed (Pulse is
+// public). Scans every intervalSec, Telegrams tiered alerts:
+//   🔥 best guess   — passes every safety gate + strong utility evidence
+//   💎 possible gem — passes every safety gate + website, thinner proof
+//   🚀 momentum     — ANY token (memes included) entering the mcap band
+//   🌱 new utility  — brand-new, has real web presence, not a name-replica,
+//                     regardless of mcap/liquidity/stats
+// Every alert carries a "Track" button; tracked tokens get an exit watch
+// (⚠️ when holders bleed or holder structure deteriorates).
 'use strict';
 
 import { chromium } from 'playwright';
@@ -11,6 +17,9 @@ import { fileURLToPath } from 'node:url';
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const CONFIG_PATH = join(ROOT, 'config.json');
 const SEEN_PATH = join(ROOT, 'seen.json');
+const NAMES_PATH = join(ROOT, 'names.json');     // replica registry
+const TRACKED_PATH = join(ROOT, 'tracked.json'); // user-tracked tokens
+const OFFSET_PATH = join(ROOT, 'tg-offset.json');
 
 const loadJson = (path, fallback) => {
   try {
@@ -20,166 +29,224 @@ const loadJson = (path, fallback) => {
     return fallback;
   }
 };
+const saveJson = (path, data) => writeFileSync(path, JSON.stringify(data, null, 1));
 
 const config = loadJson(CONFIG_PATH, {});
 const CHAINS = config.chains || ['robinhood'];
-// Pages stay open (the feed live-updates over websocket); each interval is
-// just a DOM read, so short intervals are cheap.
 const INTERVAL_MS = (config.intervalSec || 30) * 1000;
-const RELOAD_MS = (config.reloadMin || 30) * 60 * 1000; // periodic hard refresh
+const RELOAD_MS = (config.reloadMin || 30) * 60 * 1000;
 const TG_TOKEN = config.tgToken || '';
 let tgChatId = config.tgChatId || '';
-// Re-alert when a seen token's entry is older than this (fresh runs deserve a ping).
 const REALERT_MS = (config.realertHours || 24) * 3600 * 1000;
+// 🚀 momentum band (memes welcome — size is the signal)
+const BAND_MIN = config.bandMinUsd || 100000;
+const BAND_MAX = config.bandMaxUsd || 200000;
+// 🌱 new-utility tier
+const NEW_MAX_AGE_MIN = config.newMaxAgeMin || 60;
+const REPLICA_TTL_MS = (config.replicaDays || 7) * 24 * 3600 * 1000;
+// exit watch
+const EXIT_CHECK_MS = (config.exitCheckMin || 5) * 60 * 1000;
+const EXIT_HOLDER_DROP_PCT = config.exitHolderDropPct || 15;
+const EXIT_STRUCT_RISE_PTS = config.exitStructRisePts || 10;
+const TRACK_TTL_MS = (config.trackTtlDays || 7) * 24 * 3600 * 1000;
+const CHAIN_IDS = { robinhood: 4663, base: 8453, ethereum: 1, solana: 0 };
 
 if (!TG_TOKEN) console.error('[watcher] tgToken missing in config.json — alerts will NOT send.');
 
-// No chat id configured? Discover it: as soon as the owner messages the bot,
-// getUpdates reveals the chat, and it gets persisted to config.json.
-const discoverChatId = async () => {
-  if (tgChatId || !TG_TOKEN) return;
+// ---------------------------------------------------------------- telegram --
+const tg = async (method, payload) => {
   try {
-    const res = await fetch(`https://api.telegram.org/bot${TG_TOKEN}/getUpdates`);
-    const data = await res.json();
-    const msg = (data.result || []).reverse().find((u) => u.message && u.message.chat);
-    if (!msg) {
-      console.log('[watcher] waiting for you to message the bot (chat id unknown)...');
-      return;
-    }
-    tgChatId = String(msg.message.chat.id);
-    writeFileSync(CONFIG_PATH, JSON.stringify({ ...config, tgChatId }, null, 2));
-    console.log(`[watcher] discovered chat id ${tgChatId} — alerts enabled.`);
-    await sendTelegram('✅ BasedBot watcher connected. 🔥 best-guess alerts will arrive here.');
-  } catch (err) {
-    console.error('[watcher] chat discovery failed', err.message);
-  }
-};
-
-const sendTelegram = async (text) => {
-  if (!TG_TOKEN || !tgChatId) return false;
-  try {
-    const res = await fetch(`https://api.telegram.org/bot${TG_TOKEN}/sendMessage`, {
+    const res = await fetch(`https://api.telegram.org/bot${TG_TOKEN}/${method}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: tgChatId, text, disable_web_page_preview: true })
+      body: JSON.stringify(payload)
     });
-    if (!res.ok) console.error('[watcher] telegram error', res.status, await res.text());
-    return res.ok;
+    const j = await res.json().catch(() => null);
+    if (!res.ok) console.error(`[watcher] telegram ${method} error`, res.status, JSON.stringify(j).slice(0, 120));
+    return j;
   } catch (err) {
-    console.error('[watcher] telegram send failed', err.message);
-    return false;
+    console.error(`[watcher] telegram ${method} failed`, err.message);
+    return null;
   }
 };
 
-// Runs inside the page. Mirrors extension: parse per-card stats
-// (holders, pro, top10, dev, snipers, bundlers, insiders, paid) + utility
-// score, return tokens passing every hot gate.
-const scanPage = () => {
-  const SW = { GitHub: 4, MCP: 4, Docs: 3, Medium: 1, YouTube: 1, Website: 1, Discord: 1 };
-  const PADS = ['Pons', 'bow.fun', 'Flap', 'Circus', 'Charms', 'Long.xyz', 'Bankr', 'Ape Store',
-    'Zora', 'Clanker', 'Flaunch', 'Stroid', 'Klik', 'Trench', 'Livo',
-    'Pump.fun', 'PumpFun', 'PumpSwap', 'Bags', 'Meteora DBC'];
-  const KW = ['pepe', 'inu', 'doge', 'shib', 'wif', 'bonk', 'elon', 'trump', 'moon', 'wojak',
-    'chad', 'frog', 'cat', 'dog', 'kitty', 'pup', 'baby', 'fart', 'butt', 'cum', 'tendies',
-    'rug', 'ape', 'monke', 'gigachad', 'meme'];
-  const AMB = ['cat', 'dog', 'ape', 'butt', 'baby', 'moon', 'pup', 'rug', 'cum', 'meme', 'chad'];
-  const GATES = { top10: 30, dev: 2, snipers: 15, bundlers: 15, insiders: 20, holders: 100 };
+const sendTelegram = async (text, buttons) => {
+  if (!TG_TOKEN || !tgChatId) return false;
+  const payload = { chat_id: tgChatId, text, disable_web_page_preview: true };
+  if (buttons) payload.reply_markup = { inline_keyboard: buttons };
+  const j = await tg('sendMessage', payload);
+  return Boolean(j && j.ok);
+};
 
+// Single consumer of getUpdates: handles chat discovery AND Track buttons.
+const pollUpdates = async () => {
+  if (!TG_TOKEN) return;
+  const off = loadJson(OFFSET_PATH, { offset: 0 });
+  const j = await tg('getUpdates', {
+    offset: off.offset, timeout: 0,
+    allowed_updates: ['message', 'callback_query']
+  });
+  if (!j || !j.ok || !Array.isArray(j.result) || !j.result.length) return;
+  for (const u of j.result) {
+    off.offset = u.update_id + 1;
+    if (u.message && u.message.chat && !tgChatId) {
+      tgChatId = String(u.message.chat.id);
+      saveJson(CONFIG_PATH, { ...config, tgChatId });
+      console.log(`[watcher] discovered chat id ${tgChatId}`);
+      await sendTelegram('✅ BasedBot watcher connected. Tiered alerts will arrive here: 🔥 💎 🚀 🌱');
+    }
+    if (u.callback_query) await handleCallback(u.callback_query);
+  }
+  saveJson(OFFSET_PATH, off);
+};
+
+const handleCallback = async (cq) => {
+  const data = cq.data || '';
+  const answer = (text) => tg('answerCallbackQuery', { callback_query_id: cq.id, text });
+  if (data.startsWith('trk:')) {
+    const [, chain, addr] = data.split(':');
+    if (!chain || !addr) return answer('Bad data');
+    const tracked = loadJson(TRACKED_PATH, {});
+    tracked[addr] = {
+      chain, ts: Date.now(),
+      baseline: null, peakHolders: 0, lastExitAlert: 0
+    };
+    saveJson(TRACKED_PATH, tracked);
+    console.log(`[watcher] tracking ${addr} on ${chain}`);
+    await answer('📍 Tracking — exit watch armed');
+    await sendTelegram(`📍 Now tracking ${addr.slice(0, 10)}… on ${chain}. I'll warn you if holders bleed or the holder structure deteriorates. Auto-untracks in ${Math.round(TRACK_TTL_MS / 86400000)}d.`);
+  } else if (data === 'ign') {
+    await answer('Ignored');
+  }
+};
+
+// ---------------------------------------------------------------- parsing ---
+// Runs inside the page: a PURE parser. All tier logic lives in Node, so the
+// page function stays simple and the scoring is testable server-side.
+const scanPage = () => {
   const addrOf = (h) => {
-    // 0x… (case-insensitive hex) lowercased for stable keys; base58 Solana
-    // addresses are case-SENSITIVE and must keep their original case (#5).
     const m = (h || '').match(/\/token\/[^/]+\/(0x[a-fA-F0-9]{6,}|[1-9A-HJ-NP-Za-km-z]{20,})/);
     if (!m) return null;
     return m[1].startsWith('0x') ? m[1].toLowerCase() : m[1];
   };
-  const hasKw = (t) => KW.some((kw) => AMB.includes(kw)
-    ? new RegExp(`(^|[^a-z0-9])${kw}([^a-z0-9]|$)`, 'i').test(t)
-    : t.includes(kw));
-  const parseStats = (card) => {
-    const leaves = [...card.querySelectorAll('span,div')]
+  const cards = [...document.querySelectorAll('a[href*="/token/"]')]
+    .filter((a) => addrOf(a.getAttribute('href')));
+  const out = [];
+  let withStats = 0;
+  for (const c of cards) {
+    const leaves = [...c.querySelectorAll('span,div')]
       .filter((e) => e.childElementCount === 0)
       .map((e) => e.textContent.trim()).filter(Boolean);
+    const alts = [...c.querySelectorAll('img')].map((i) => (i.alt || '').trim()).filter(Boolean);
+    const titles = [...c.querySelectorAll('[title]')]
+      .map((e) => (e.getAttribute('title') || '').trim()).filter(Boolean);
+    // positional stats (layout canary: reject unrecognized shapes)
     const pctNum = (t) => (t.startsWith('<') ? 0.5 : Number(t.replace('%', '')));
     const countNum = (t) => {
       const m = t.match(/^([\d.]+)(K|M)?$/);
       return m ? Number(m[1]) * (m[2] === 'M' ? 1e6 : m[2] === 'K' ? 1e3 : 1) : null;
     };
+    let stats = null;
     const pctIdx = leaves.map((t, i) => (/^<?\d+(\.\d+)?%$/.test(t) ? i : -1)).filter((i) => i >= 0);
-    if (pctIdx.length < 5) return null;
-    // Layout canary (#6): refuse to score unrecognizable card shapes rather
-    // than silently mislabel the positional stats.
-    if (pctIdx.length > 8) return null;
-    const last5 = pctIdx.slice(-5);
-    const [top10, dev, snipers, bundlers, insiders] = last5.map((i) => pctNum(leaves[i]));
-    if ([top10, dev, snipers, bundlers, insiders].some((v) => !(v >= 0 && v <= 100))) return null;
-    const holders = countNum(leaves[last5[0] - 2] || '');
-    const pro = countNum(leaves[last5[0] - 1] || '');
-    if (holders === null || pro === null) return null;
-    return { holders, pro, top10, dev, snipers, bundlers, insiders, paid: leaves.includes('Paid') };
-  };
-
-  const cards = [...document.querySelectorAll('a[href*="/token/"]')]
-    .filter((a) => addrOf(a.getAttribute('href')));
-  const hot = [];
-  let withStats = 0;
-  for (const c of cards) {
-    const alts = [...c.querySelectorAll('img')].map((i) => (i.alt || '').trim()).filter(Boolean);
-    const symbol = alts[0] || '';
-    const badges = alts.slice(1);
-    const titles = [...c.querySelectorAll('[title]')]
-      .map((e) => (e.getAttribute('title') || '').trim()).filter(Boolean);
-    const blob = (c.textContent || '').slice(0, 40).toLowerCase();
-    let score = 0;
-    if (badges.some((b) => PADS.includes(b))) score -= 3;
-    if (badges.includes('Virtual')) score += 1;
-    if (hasKw(blob)) score -= 3;
-    titles.forEach((t) => { if (typeof SW[t] === 'number') score += SW[t]; });
-    const s = parseStats(c);
-    if (s) withStats += 1;
-    if (!s || !s.paid) continue;
-    if (hasKw(blob)) continue; // meme-named: never alertable, however clean
-    const ratio = s.holders > 0 ? s.pro / s.holders : 0;
-    const safetyPass =
-      s.top10 <= GATES.top10 && s.dev <= GATES.dev &&
-      s.snipers <= GATES.snipers && s.bundlers <= GATES.bundlers &&
-      s.insiders <= GATES.insiders && s.holders >= GATES.holders &&
-      ratio >= 0.05 && ratio <= 0.6;
-    if (!safetyPass) continue;
-    // 🔥 = strong utility evidence; 💎 = safe + has website but thinner proof.
-    const level = score >= 2 ? 'hot' : (titles.includes('Website') ? 'gem' : null);
-    if (level) {
-      // Full name renders right after the symbol in the card's text leaves.
-      const leaves = [...c.querySelectorAll('span,div')]
-        .filter((e) => e.childElementCount === 0)
-        .map((e) => e.textContent.trim()).filter(Boolean);
-      const symIdx = leaves.indexOf(symbol);
-      let name = symIdx >= 0 ? (leaves[symIdx + 1] || '') : '';
-      if (name.startsWith('/') || name === symbol) name = '';
-      // Market context from the card: age, market cap, volume, tx count.
-      const after = (label) => {
-        const i = leaves.indexOf(label);
-        return i >= 0 ? (leaves[i + 1] || '') : '';
-      };
-      const age = leaves.find((t) => /^\d+(?:\.\d+)?[smhd]$/.test(t)) || '?';
-      const mc = after('MC');
-      const vol = after('V');
-      const tx = after('TX');
-      hot.push({
-        addr: addrOf(c.getAttribute('href')),
-        symbol,
-        name,
-        level,
-        market: `${age} old · MC ${mc || '?'} · vol ${vol || '?'} · ${tx || '?'} tx`,
-        stats: `top10 ${s.top10}% · dev ${s.dev}% · snipers ${s.snipers}% · bundlers ${s.bundlers}% · ` +
-          `insiders ${s.insiders}% · ${s.holders} holders (${Math.round(ratio * 100)}% pro)`
-      });
+    if (pctIdx.length >= 5 && pctIdx.length <= 8) {
+      const l5 = pctIdx.slice(-5);
+      const [top10, dev, snipers, bundlers, insiders] = l5.map((i) => pctNum(leaves[i]));
+      const holders = countNum(leaves[l5[0] - 2] || '');
+      const pro = countNum(leaves[l5[0] - 1] || '');
+      if (holders !== null && pro !== null &&
+        [top10, dev, snipers, bundlers, insiders].every((v) => v >= 0 && v <= 100)) {
+        stats = { holders, pro, top10, dev, snipers, bundlers, insiders, paid: leaves.includes('Paid') };
+        withStats += 1;
+      }
     }
+    // First alt that is NOT a DEX/launchpad badge — cards with a blank logo
+    // alt otherwise report their symbol as "Uniswap V4".
+    const NOT_SYMBOL = ['Uniswap V2', 'Uniswap V3', 'Uniswap V4', 'Virtual', 'Pons', 'bow.fun',
+      'Flap', 'Circus', 'Charms', 'Long.xyz', 'Bankr', 'Ape Store', 'Zora', 'Clanker', 'Flaunch',
+      'Stroid', 'Klik', 'Trench', 'Livo', 'Pump.fun', 'PumpFun', 'PumpSwap', 'Bags', 'Meteora DBC'];
+    const symbol = alts.find((a) => !NOT_SYMBOL.includes(a)) || '';
+    const symIdx = leaves.indexOf(symbol);
+    let name = symIdx >= 0 ? (leaves[symIdx + 1] || '') : '';
+    if (name.startsWith('/') || name === symbol) name = '';
+    const after = (label) => {
+      const i = leaves.indexOf(label);
+      return i >= 0 ? (leaves[i + 1] || '') : '';
+    };
+    out.push({
+      addr: addrOf(c.getAttribute('href')),
+      symbol, name,
+      badges: alts.slice(1),
+      titles,
+      blob: (c.textContent || '').slice(0, 40).toLowerCase(),
+      age: leaves.find((t) => /^\d+(?:\.\d+)?[smhd]$/.test(t)) || '',
+      mc: after('MC'), vol: after('V'), tx: after('TX'),
+      stats
+    });
   }
-  return { hot, cardCount: cards.length, withStats };
+  return { cards: out, cardCount: cards.length, withStats };
 };
 
-// Page-controlled token text must never carry URLs/handles/RTL tricks into
-// the trusted alert channel (#8). Mirrors the extension's sanitizer.
+// --------------------------------------------------------------- scoring ----
+const PADS = ['Pons', 'bow.fun', 'Flap', 'Circus', 'Charms', 'Long.xyz', 'Bankr', 'Ape Store',
+  'Zora', 'Clanker', 'Flaunch', 'Stroid', 'Klik', 'Trench', 'Livo',
+  'Pump.fun', 'PumpFun', 'PumpSwap', 'Bags', 'Meteora DBC'];
+const SW = { GitHub: 4, MCP: 4, Docs: 3, Medium: 1, YouTube: 1, Website: 1, Discord: 1 };
+const UTILITY_TITLES = ['Website', 'GitHub', 'MCP', 'Docs', 'Medium', 'YouTube', 'Discord'];
+const KW = ['pepe', 'inu', 'doge', 'shib', 'wif', 'bonk', 'elon', 'trump', 'moon', 'wojak',
+  'chad', 'frog', 'cat', 'dog', 'kitty', 'pup', 'baby', 'fart', 'butt', 'cum', 'tendies',
+  'rug', 'ape', 'monke', 'gigachad', 'meme'];
+const AMB = ['cat', 'dog', 'ape', 'butt', 'baby', 'moon', 'pup', 'rug', 'cum', 'meme', 'chad'];
+const GATES = { top10: 30, dev: 2, snipers: 15, bundlers: 15, insiders: 20, holders: 100 };
+
+const hasKw = (t) => KW.some((kw) => AMB.includes(kw)
+  ? new RegExp(`(^|[^a-z0-9])${kw}([^a-z0-9]|$)`, 'i').test(t)
+  : t.includes(kw));
+const moneyNum = (t) => {
+  const m = (t || '').replace(/[$,]/g, '').match(/^([\d.]+)([KMB])?$/i);
+  if (!m) return null;
+  const mult = { K: 1e3, M: 1e6, B: 1e9 }[(m[2] || '').toUpperCase()] || 1;
+  return Number(m[1]) * mult;
+};
+const ageMin = (t) => {
+  const m = (t || '').match(/^([\d.]+)([smhd])$/);
+  if (!m) return null;
+  return Number(m[1]) * { s: 1 / 60, m: 1, h: 60, d: 1440 }[m[2]];
+};
+const normToken = (t) => (t || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
+const socialScore = (card) => {
+  let s = 0;
+  if (card.badges.some((b) => PADS.includes(b))) s -= 3;
+  if (card.badges.includes('Virtual')) s += 1;
+  if (hasKw(card.blob)) s -= 3;
+  card.titles.forEach((t) => { if (typeof SW[t] === 'number') s += SW[t]; });
+  return s;
+};
+
+const safetyPass = (s) => {
+  if (!s || !s.paid) return false;
+  const ratio = s.holders > 0 ? s.pro / s.holders : 0;
+  return s.top10 <= GATES.top10 && s.dev <= GATES.dev &&
+    s.snipers <= GATES.snipers && s.bundlers <= GATES.bundlers &&
+    s.insiders <= GATES.insiders && s.holders >= GATES.holders &&
+    ratio >= 0.05 && ratio <= 0.6;
+};
+
+// Replica check: a token whose symbol OR name matches a recently seen launch
+// under a different address is a copy, not a new idea (the $MISSPELED trap).
+const replicaCheck = (card, names) => {
+  const now = Date.now();
+  let replica = false;
+  for (const key of [normToken(card.symbol), normToken(card.name)]) {
+    if (!key || key.length < 3) continue;
+    const prior = names[key];
+    if (prior && prior.addr !== card.addr && now - prior.ts < REPLICA_TTL_MS) replica = true;
+    if (!prior) names[key] = { addr: card.addr, ts: now };
+  }
+  return replica;
+};
+
+// --------------------------------------------------------------- alerts -----
 const sanitizeAlertText = (text, maxLen = 48) => {
   if (typeof text !== 'string') return '';
   return text
@@ -191,8 +258,128 @@ const sanitizeAlertText = (text, maxLen = 48) => {
     .slice(0, maxLen);
 };
 
-// Full Chromium + realistic fingerprint: the headless-shell build gets stuck
-// on Cloudflare's "Just a moment..." challenge; this profile passes it.
+const TIERS = {
+  hot: { head: '🔥 Best guess', body: 'passes every safety metric with real utility signals.' },
+  gem: { head: '💎 Possible gem', body: 'passes every safety metric, has a website, thinner proof — DYOR.' },
+  band: { head: '🚀 Momentum', body: (c) => `entered the $${Math.round(BAND_MIN / 1000)}K–$${Math.round(BAND_MAX / 1000)}K band${hasKw(c.blob) ? ' (meme — you asked for these too)' : ''}.` },
+  fresh: { head: '🌱 New utility launch', body: 'brand-new, real web presence, not a name-replica. Stats may be raw — size accordingly.' }
+};
+
+const alertToken = async (chain, card, tier, extra = '') => {
+  const url = `https://basedbot.app/token/${chain}/${card.addr}`;
+  const sym = sanitizeAlertText(card.symbol, 20);
+  const nm = sanitizeAlertText(card.name, 40);
+  const label = nm ? `${sym} — ${nm}` : (sym || card.addr.slice(0, 10));
+  const t = TIERS[tier];
+  const body = typeof t.body === 'function' ? t.body(card) : t.body;
+  const market = `${card.age || '?'} old · MC ${card.mc || '?'} · vol ${card.vol || '?'} · ${card.tx || '?'} tx`;
+  const stats = card.stats
+    ? `top10 ${card.stats.top10}% · dev ${card.stats.dev}% · snipers ${card.stats.snipers}% · bundlers ${card.stats.bundlers}% · insiders ${card.stats.insiders}% · ${card.stats.holders} holders`
+    : 'stats not yet on the card';
+  const buttons = [[
+    { text: '📍 Track', callback_data: `trk:${chain}:${card.addr}` },
+    { text: '✕ Ignore', callback_data: 'ign' }
+  ]];
+  const ok = await sendTelegram(
+    `${t.head} on Pulse (${chain})${extra}\n${label}\n${body}\n${market}\n${stats}\n${url}`, buttons);
+  if (ok) console.log(`[watcher] alerted ${tier} ${card.symbol} on ${chain}`);
+  return ok;
+};
+
+// ------------------------------------------------------------- exit watch ---
+// Tracked tokens leave the feed, so we read basedbot's metrics API from an
+// open page's origin (anonymous session). Verified shape: POST
+// /api/tokens/metrics/batch { tokens:[addr], chain:<id> } -> data[addr].
+const fetchTrackedMetrics = async (chain, addrs) => {
+  const page = pages.get(chain);
+  if (!page) return null;
+  try {
+    return await page.evaluate(async ({ addrs, chainId }) => {
+      // Same-origin endpoint, body key "addresses" — captured from the page's
+      // own traffic; works anonymously because it rides the page session.
+      const r = await fetch('/api/tokens/metrics/batch', {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ addresses: addrs, chain: chainId })
+      });
+      if (!r.ok) return { error: r.status };
+      const j = await r.json().catch(() => null);
+      return { data: (j && j.data) || {} };
+    }, { addrs, chainId: CHAIN_IDS[chain] || 0 });
+  } catch (err) {
+    console.error(`[watcher] metrics fetch failed on ${chain}:`, err.message.slice(0, 80));
+    return null;
+  }
+};
+
+let exitApiWarned = false;
+const exitWatch = async () => {
+  const tracked = loadJson(TRACKED_PATH, {});
+  const now = Date.now();
+  let dirty = false;
+  const byChain = {};
+  for (const [addr, t] of Object.entries(tracked)) {
+    if (now - t.ts > TRACK_TTL_MS) {
+      delete tracked[addr];
+      dirty = true;
+      await sendTelegram(`🏁 Auto-untracked ${addr.slice(0, 10)}… (${t.chain}) after ${Math.round(TRACK_TTL_MS / 86400000)}d.`);
+      continue;
+    }
+    (byChain[t.chain] = byChain[t.chain] || []).push(addr);
+  }
+  for (const [chain, addrs] of Object.entries(byChain)) {
+    const res = await fetchTrackedMetrics(chain, addrs);
+    if (!res) continue;
+    if (res.error) {
+      if (!exitApiWarned) {
+        exitApiWarned = true;
+        console.error(`[watcher] metrics API returned ${res.error} — exit watch degraded`);
+        await sendTelegram(`⚠️ Exit watch: basedbot's metrics API refused the anonymous request (HTTP ${res.error}). Tracking still records, but deterioration alerts are degraded until this is resolved.`);
+      }
+      continue;
+    }
+    for (const addr of addrs) {
+      const m = Object.entries(res.data).find(([k]) => k.toLowerCase().startsWith(addr.toLowerCase()));
+      if (!m) continue;
+      const v = m[1] || {};
+      const holders = Number(v.holdersCount);
+      const top10 = Number(v.top10HoldersPct);
+      const insiders = Number(v.insidersPct);
+      const t = tracked[addr];
+      if (!Number.isFinite(holders)) continue;
+      if (!t.baseline) {
+        t.baseline = { holders, top10, insiders, ts: now };
+        t.peakHolders = holders;
+        dirty = true;
+        continue;
+      }
+      t.peakHolders = Math.max(t.peakHolders || 0, holders);
+      dirty = true;
+      if (now - (t.lastExitAlert || 0) < REALERT_MS) continue;
+      const reasons = [];
+      const dropPct = t.peakHolders > 0 ? (1 - holders / t.peakHolders) * 100 : 0;
+      if (dropPct >= EXIT_HOLDER_DROP_PCT) {
+        reasons.push(`holders bleeding: ${t.peakHolders} → ${holders} (−${Math.round(dropPct)}%)`);
+      }
+      if (Number.isFinite(top10) && Number.isFinite(t.baseline.top10) &&
+        top10 - t.baseline.top10 >= EXIT_STRUCT_RISE_PTS) {
+        reasons.push(`top-10 concentration rising: ${Math.round(t.baseline.top10)}% → ${Math.round(top10)}%`);
+      }
+      if (Number.isFinite(insiders) && Number.isFinite(t.baseline.insiders) &&
+        insiders - t.baseline.insiders >= EXIT_STRUCT_RISE_PTS) {
+        reasons.push(`insiders rising: ${Math.round(t.baseline.insiders)}% → ${Math.round(insiders)}%`);
+      }
+      if (reasons.length) {
+        t.lastExitAlert = now;
+        await sendTelegram(
+          `⚠️ EXIT WATCH (${chain})\n${addr.slice(0, 12)}…\n${reasons.join('\n')}\nhttps://basedbot.app/token/${chain}/${addr}`);
+      }
+    }
+  }
+  if (dirty) saveJson(TRACKED_PATH, tracked);
+};
+
+// --------------------------------------------------------------- browser ----
 const LAUNCH_OPTS = {
   headless: true,
   channel: 'chromium',
@@ -206,19 +393,14 @@ const CONTEXT_OPTS = {
   timezoneId: 'Europe/Berlin'
 };
 
-// Persistent browser: one page per chain stays open, the live feed streams in
-// over websocket, and each tick only re-reads the DOM.
 let browser = null;
-const pages = new Map(); // chain -> page
+const pages = new Map();
 
 const openChain = async (chain) => {
   const context = await browser.newContext(CONTEXT_OPTS);
   const page = await context.newPage();
-  // We only read the DOM tree — pixels are irrelevant. Blocking images/fonts/
-  // CSS and throttling the renderer cuts steady-state CPU/memory massively.
-  // Images must NOT be aborted — the app removes failed <img> elements, which
-  // destroys the symbol/badge alts our scoring reads. A 1x1 transparent PNG
-  // keeps the DOM intact at near-zero decode cost.
+  // Images must not be aborted (the app removes failed <img>, killing the
+  // alt-based symbols/badges) — serve a 1x1 instead. Fonts/media abort fine.
   const TINY_PNG = Buffer.from(
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
     'base64'
@@ -234,7 +416,7 @@ const openChain = async (chain) => {
   const cdp = await context.newCDPSession(page);
   await cdp.send('Emulation.setCPUThrottlingRate', { rate: 3 });
   await page.goto(`https://basedbot.app/pulse/${chain}`, { waitUntil: 'domcontentloaded', timeout: 45000 });
-  await page.waitForTimeout(10000); // initial feed populate + Cloudflare clearance
+  await page.waitForTimeout(10000);
   pages.set(chain, page);
   return page;
 };
@@ -247,15 +429,18 @@ const start = async () => {
   }
 };
 
+// ------------------------------------------------------------------ tick ----
 let ticking = false;
-const noStatsStreak = new Map(); // chain -> consecutive ticks with 0 parsed stats
+const noStatsStreak = new Map();
 const layoutWarnedFor = new Set();
+
 const tick = async () => {
-  if (ticking) return; // never overlap
+  if (ticking) return;
   ticking = true;
   try {
-    await discoverChatId();
+    await pollUpdates();
     const seen = loadJson(SEEN_PATH, {});
+    const names = loadJson(NAMES_PATH, {});
     for (const chain of CHAINS) {
       let result;
       try {
@@ -266,43 +451,54 @@ const tick = async () => {
         await openChain(chain);
         continue;
       }
-      const { hot, cardCount, withStats } = result;
-      // Layout-drift alarm (#6): a populated feed where nothing parses means
-      // basedbot changed their cards — say so once instead of going silent.
+      const { cards, cardCount, withStats } = result;
       if (cardCount >= 20 && withStats === 0) {
         const streak = (noStatsStreak.get(chain) || 0) + 1;
         noStatsStreak.set(chain, streak);
         if (streak >= 20 && !layoutWarnedFor.has(chain)) {
           layoutWarnedFor.add(chain);
-          await sendTelegram(`⚠️ ${chain}: cards render but stats no longer parse — basedbot may have changed their card layout. Scoring is effectively paused on this chain until the watcher is updated.`);
+          await sendTelegram(`⚠️ ${chain}: cards render but stats no longer parse — basedbot may have changed their card layout. Scoring is paused on this chain until the watcher is updated.`);
         }
       } else {
         noStatsStreak.set(chain, 0);
       }
-      for (const t of hot) {
-        // seen entries: {ts, level}. A 💎 that later earns 🔥 re-alerts as the upgrade.
-        const prior = typeof seen[t.addr] === 'number'
-          ? { ts: seen[t.addr], level: 'hot' } : seen[t.addr];
-        const upgraded = prior && prior.level === 'gem' && t.level === 'hot';
-        if (prior && !upgraded && Date.now() - prior.ts < REALERT_MS) continue;
-        const url = `https://basedbot.app/token/${chain}/${t.addr}`;
-        const sym = sanitizeAlertText(t.symbol, 20);
-        const nm = sanitizeAlertText(t.name, 40);
-        const label = nm ? `${sym} — ${nm}` : (sym || t.addr.slice(0, 10));
-        const head = t.level === 'hot'
-          ? `🔥 Best guess on Pulse (${chain})${upgraded ? ' — upgraded from 💎' : ''}`
-          : `💎 Possible gem on Pulse (${chain})`;
-        const body = t.level === 'hot'
-          ? 'passes every safety metric with real utility signals.'
-          : 'passes every safety metric, has a website, thinner utility proof — DYOR.';
-        const ok = await sendTelegram(`${head}\n${label}\n${body}\n${t.market}\n${t.stats}\n${url}`);
-        if (ok) console.log(`[watcher] alerted ${t.level} ${t.symbol} on ${chain}`);
-        seen[t.addr] = { ts: Date.now(), level: t.level };
-        // Persist immediately — a crash mid-tick must never forget a sent
-        // alert, or it repeats after the systemd restart.
-        writeFileSync(SEEN_PATH, JSON.stringify(seen, null, 2));
+
+      for (const card of cards) {
+        if (!card.addr) continue;
+        const kw = hasKw(card.blob);
+        const score = socialScore(card);
+        const safe = safetyPass(card.stats);
+        const replica = replicaCheck(card, names);
+        const mcUsd = moneyNum(card.mc);
+        const age = ageMin(card.age);
+
+        // tier decisions (a token can earn several over its life; dedupe per tier)
+        const tiers = [];
+        if (safe && !kw && score >= 2) tiers.push('hot');
+        else if (safe && !kw && card.titles.includes('Website')) tiers.push('gem');
+        if (mcUsd !== null && mcUsd >= BAND_MIN && mcUsd <= BAND_MAX) tiers.push('band');
+        if (age !== null && age <= NEW_MAX_AGE_MIN && !kw && !replica &&
+          card.titles.some((t) => UTILITY_TITLES.includes(t))) tiers.push('fresh');
+
+        for (const tier of tiers) {
+          const key = `${tier}:${card.addr}`;
+          const upgraded = tier === 'hot' && !seen[key] && seen[`gem:${card.addr}`];
+          if (seen[key] && Date.now() - seen[key].ts < REALERT_MS) continue;
+          if (tier === 'gem' && seen[`hot:${card.addr}`]) continue; // never downgrade-noise
+          await alertToken(chain, card, tier, upgraded ? ' — upgraded from 💎' : '');
+          seen[key] = { ts: Date.now() };
+          saveJson(SEEN_PATH, seen); // persist per-send: crash must not re-alert
+        }
       }
     }
+    // prune the replica registry
+    const now = Date.now();
+    let pruned = false;
+    for (const [k, v] of Object.entries(names)) {
+      if (now - v.ts > REPLICA_TTL_MS) { delete names[k]; pruned = true; }
+    }
+    saveJson(NAMES_PATH, names);
+    if (pruned) console.log('[watcher] pruned replica registry');
   } catch (err) {
     console.error('[watcher] tick failed — exiting for systemd restart:', err.message);
     process.exit(1);
@@ -311,7 +507,6 @@ const tick = async () => {
   }
 };
 
-// Hard refresh each page periodically so a drifted/stale SPA never lies to us.
 const reloadAll = async () => {
   for (const chain of CHAINS) {
     try {
@@ -324,24 +519,22 @@ const reloadAll = async () => {
   console.log('[watcher] pages refreshed');
 };
 
-// Periodic liveness ping so silence is provably "no qualifying tokens",
-// never "the watcher died".
 const HEARTBEAT_MS = (config.heartbeatHours || 12) * 3600 * 1000;
 let scanCount = 0;
-const origTick = tick;
 const heartbeat = async () => {
   const seen = loadJson(SEEN_PATH, {});
+  const tracked = loadJson(TRACKED_PATH, {});
   await sendTelegram(
-    `💓 Watcher alive — ${scanCount} scans since last heartbeat across ` +
-    `${CHAINS.join('/')}; ${Object.keys(seen).length} token(s) alerted so far. ` +
-    `Silence means nothing qualified.`
-  );
+    `💓 Watcher alive — ${scanCount} scans across ${CHAINS.join('/')}; ` +
+    `${Object.keys(seen).length} alerts sent, ${Object.keys(tracked).length} token(s) tracked. ` +
+    `Silence means nothing qualified.`);
   scanCount = 0;
 };
 
-console.log(`[watcher] started — chains: ${CHAINS.join(', ')}, scan every ${INTERVAL_MS / 1000}s, reload every ${RELOAD_MS / 60000}min, heartbeat every ${HEARTBEAT_MS / 3600000}h`);
+console.log(`[watcher] v2 started — chains: ${CHAINS.join(', ')}, scan ${INTERVAL_MS / 1000}s, band $${BAND_MIN / 1000}K–$${BAND_MAX / 1000}K, fresh ≤${NEW_MAX_AGE_MIN}min, exit watch ${EXIT_CHECK_MS / 60000}min`);
 await start();
-await origTick();
-setInterval(() => { scanCount += 1; origTick(); }, INTERVAL_MS);
+await tick();
+setInterval(() => { scanCount += 1; tick(); }, INTERVAL_MS);
 setInterval(reloadAll, RELOAD_MS);
+setInterval(exitWatch, EXIT_CHECK_MS);
 setInterval(heartbeat, HEARTBEAT_MS);
