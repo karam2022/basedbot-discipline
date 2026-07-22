@@ -258,6 +258,78 @@ const sanitizeAlertText = (text, maxLen = 48) => {
     .slice(0, maxLen);
 };
 
+// ------------------------------------------------------- enrichment ---------
+// Metadata API (shape captured from page traffic): fills real symbol/name and
+// social links — cards with blank logo alts otherwise have no usable name.
+const fetchMetadata = async (chain, addrs) => {
+  const page = pages.get(chain);
+  if (!page || !addrs.length) return {};
+  try {
+    const res = await page.evaluate(async ({ addrs, chainId }) => {
+      const r = await fetch('/api/tokens/metadata', {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tokens: addrs.map((a) => ({ address: a, chain: chainId })) })
+      });
+      if (!r.ok) return {};
+      const j = await r.json().catch(() => null);
+      return (j && j.data) || {};
+    }, { addrs, chainId: CHAIN_IDS[chain] || 0 });
+    const map = {};
+    for (const [k, v] of Object.entries(res)) {
+      map[k.replace(/-\d+$/, '').toLowerCase()] = v;
+    }
+    return map;
+  } catch (err) {
+    console.error(`[watcher] metadata fetch failed on ${chain}:`, err.message.slice(0, 60));
+    return {};
+  }
+};
+
+// Website peek: the project describing itself. Title + meta description go
+// into the alert so the human judges utility in two seconds; a dead site
+// disqualifies 🌱 outright (fake web presence), and a domain unrelated to the
+// token name gets flagged (link-borrowing — memes pointing at real projects).
+const siteCache = new Map(); // url -> { ok, line, ts }
+const SITE_CACHE_MS = 24 * 3600 * 1000;
+const sitePeek = async (url) => {
+  if (!url || !/^https?:\/\//i.test(url)) return { ok: false, line: '' };
+  const hit = siteCache.get(url);
+  if (hit && Date.now() - hit.ts < SITE_CACHE_MS) return hit;
+  let out = { ok: false, line: 'website unreachable', ts: Date.now() };
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 6000);
+    const r = await fetch(url, {
+      signal: ctrl.signal, redirect: 'follow',
+      headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36' }
+    });
+    clearTimeout(t);
+    if (r.ok) {
+      const html = (await r.text()).slice(0, 40000);
+      const pick = (re) => {
+        const m = html.match(re);
+        return m ? m[1].replace(/<[^>]+>/g, ' ').replace(/&[a-z#0-9]+;/gi, ' ').trim() : '';
+      };
+      const title = pick(/<title[^>]*>([^<]{2,120})/i);
+      const desc = pick(/<meta[^>]+(?:name="description"|property="og:description")[^>]+content="([^"]{2,200})"/i)
+        || pick(/<meta[^>]+content="([^"]{2,200})"[^>]+(?:name="description"|property="og:description")/i);
+      const line = sanitizeAlertText([title, desc].filter(Boolean).join(' · '), 170);
+      out = { ok: true, line: line || '(site loads, no self-description)', ts: Date.now() };
+    }
+  } catch (err) { /* stays unreachable */ }
+  siteCache.set(url, out);
+  return out;
+};
+
+const domainMatchesToken = (url, symbol, name) => {
+  try {
+    const host = new URL(url).hostname.replace(/^www\./, '').split('.')[0].toLowerCase();
+    const toks = [normToken(symbol), normToken(name)].filter((t) => t && t.length >= 3);
+    return toks.some((t) => host.includes(t) || t.includes(host));
+  } catch (e) { return true; }
+};
+
 const TIERS = {
   hot: { head: '🔥 Best guess', body: 'passes every safety metric with real utility signals.' },
   gem: { head: '💎 Possible gem', body: 'passes every safety metric, has a website, thinner proof — DYOR.' },
@@ -280,8 +352,9 @@ const alertToken = async (chain, card, tier, extra = '') => {
     { text: '📍 Track', callback_data: `trk:${chain}:${card.addr}` },
     { text: '✕ Ignore', callback_data: 'ign' }
   ]];
+  const webLine = card.webLine ? `\n${card.webLine}` : '';
   const ok = await sendTelegram(
-    `${t.head} on Pulse (${chain})${extra}\n${label}\n${body}\n${market}\n${stats}\n${url}`, buttons);
+    `${t.head} on Pulse (${chain})${extra}\n${label}\n${body}${webLine}\n${market}\n${stats}\n${url}`, buttons);
   if (ok) console.log(`[watcher] alerted ${tier} ${card.symbol} on ${chain}`);
   return ok;
 };
@@ -463,6 +536,7 @@ const tick = async () => {
         noStatsStreak.set(chain, 0);
       }
 
+      const pending = [];
       for (const card of cards) {
         if (!card.addr) continue;
         const kw = hasKw(card.blob);
@@ -485,7 +559,52 @@ const tick = async () => {
           const upgraded = tier === 'hot' && !seen[key] && seen[`gem:${card.addr}`];
           if (seen[key] && Date.now() - seen[key].ts < REALERT_MS) continue;
           if (tier === 'gem' && seen[`hot:${card.addr}`]) continue; // never downgrade-noise
-          await alertToken(chain, card, tier, upgraded ? ' — upgraded from 💎' : '');
+          pending.push({ card, tier, upgraded });
+        }
+      }
+
+      // Enrich pending alerts in one metadata batch, then peek websites so the
+      // alert carries the project's own self-description (or exposes a dead /
+      // borrowed link). 🌱 requires a LIVE website — fake presence disqualifies.
+      if (pending.length) {
+        const meta = await fetchMetadata(chain, [...new Set(pending.map((x) => x.card.addr))]);
+        for (const x of pending) {
+          const m = meta[x.card.addr.toLowerCase()] || {};
+          if (!x.card.symbol && m.symbol) x.card.symbol = String(m.symbol);
+          if (!x.card.name && m.name) x.card.name = String(m.name);
+          x.card.website = m.website_url || null;
+        }
+        for (const x of pending) {
+          const key = `${x.tier}:${x.card.addr}`;
+          const flags = [];
+          if (x.card.website) {
+            const peek = await sitePeek(x.card.website);
+            if (!peek.ok && x.tier === 'fresh') {
+              // dead website = fake presence: no 🌱, and never re-check
+              seen[key] = { ts: Date.now(), skipped: 'dead-site' };
+              saveJson(SEEN_PATH, seen);
+              console.log(`[watcher] skipped fresh ${x.card.symbol}: website unreachable`);
+              continue;
+            }
+            let host = x.card.website;
+            try { host = new URL(x.card.website).hostname.replace(/^www\./, ''); } catch (e) { /* raw */ }
+            flags.push(`web: ${host} — ${peek.ok ? peek.line : '⚠️ unreachable'}`);
+            if (peek.ok && !domainMatchesToken(x.card.website, x.card.symbol, x.card.name)) {
+              flags.push('⚠️ domain unrelated to token name (borrowed link?)');
+            }
+          } else if (x.tier === 'fresh') {
+            // metadata says no website after all — card [title] was misleading
+            seen[key] = { ts: Date.now(), skipped: 'no-site' };
+            saveJson(SEEN_PATH, seen);
+            continue;
+          }
+          const mcN = moneyNum(x.card.mc);
+          const volN = moneyNum(x.card.vol);
+          if (mcN && volN && volN > 5 * mcN) {
+            flags.push(`⚠️ volume ${Math.round(volN / mcN)}x mcap — possible wash trading`);
+          }
+          x.card.webLine = flags.join('\n');
+          await alertToken(chain, x.card, x.tier, x.upgraded ? ' — upgraded from 💎' : '');
           seen[key] = { ts: Date.now() };
           saveJson(SEEN_PATH, seen); // persist per-send: crash must not re-alert
         }
