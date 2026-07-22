@@ -42,12 +42,12 @@
       z-index: 5;
     }
     .logo {
-      width: 34px; height: 34px;
-      display: grid; place-items: center;
-      font-size: 18px;
+      width: 38px; height: 38px;
+      object-fit: contain;
       border-radius: 10px;
-      background: linear-gradient(135deg, rgba(34, 197, 94, 0.22), rgba(34, 197, 94, 0.06));
-      border: 1px solid rgba(34, 197, 94, 0.35);
+      padding: 3px;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid var(--border);
     }
     .brand-name { font-size: 14px; font-weight: 650; letter-spacing: -0.01em; }
     .brand-sub { font-size: 11px; color: var(--muted); margin-top: 1px; }
@@ -217,7 +217,7 @@
 </head>
 <body>
   <header>
-    <div class="logo">🛡️</div>
+    <img class="logo" src="icons/icon128.png" alt="BasedBot Discipline" />
     <div>
       <div class="brand-name">BasedBot Discipline</div>
       <div class="brand-sub">Filter the noise. Take profit. Cut losers.</div>
