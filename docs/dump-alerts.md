@@ -16,12 +16,13 @@ actual trades and is same-origin, so `src/dump.js` fetches it directly.
 ## How it works
 
 - `main.js` runs `dump.tick()` every 20 s.
-- For each held position (from the `positions` store, capped at 8), it fetches
-  `/api/token/{addr}/trades` and runs `detect()`.
+- It checks up to 8 held positions per tick and rotates the cursor, so larger
+  portfolios are fully covered over successive ticks.
 - `detect(trades, { creatorAddr, whaleSellUsd, now, windowMs })` returns the
   recent **sells** (`is_buy === false`, within `dumpWindowMin`) that are either
   a **dev sell** (`trader_full === creatorAddr`, from `BBD.feed.creatorFor`) or a
-  **whale sell** (`volume_usd >= whaleSellUsd`).
+  **whale sell**. The effective threshold is the greater of `whaleSellUsd`
+  and `whaleSellLiquidityPct` of observed pool liquidity.
 - Each hit alerts once (deduped by `tx_hash`; the recency window means a reload
   never re-alerts old dumps) via the background worker → Chrome notification +
   Telegram.
@@ -33,6 +34,7 @@ Trade shape used (per row): `trader_full`, `is_buy`, `volume_usd`, `timestamp`
 
 - `dumpAlertsEnabled` — master toggle ("Dump alerts").
 - `whaleSellUsd` — single-sell USD threshold (default 300).
+- `whaleSellLiquidityPct` — adaptive pool-relative floor (default 2%).
 - `dumpWindowMin` — only trades this recent count (default 3).
 
 ## Not included

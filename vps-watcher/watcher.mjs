@@ -1,6 +1,6 @@
 // BasedBot 🔥 best-guess watcher — runs headless on a VPS, no wallet needed
 // (Pulse is public). Scans every INTERVAL_MIN minutes, Telegrams NEW tokens
-// that pass every safety metric. Mirrors the extension's v1.6 hot logic.
+// that pass every safety metric. Mirrors the extension's shared hot gates.
 'use strict';
 
 import { chromium } from 'playwright';
@@ -286,9 +286,10 @@ const tick = async () => {
         noStatsStreak.set(chain, 0);
       }
       for (const t of hot) {
+        const seenKey = `${chain}:${t.addr}`;
         // seen entries: {ts, level}. A 💎 that later earns 🔥 re-alerts as the upgrade.
-        const prior = typeof seen[t.addr] === 'number'
-          ? { ts: seen[t.addr], level: 'hot' } : seen[t.addr];
+        const prior = typeof seen[seenKey] === 'number'
+          ? { ts: seen[seenKey], level: 'hot' } : seen[seenKey];
         const upgraded = prior && prior.level === 'gem' && t.level === 'hot';
         if (prior && !upgraded && Date.now() - prior.ts < REALERT_MS) continue;
         const url = `https://basedbot.app/token/${chain}/${t.addr}`;
@@ -303,7 +304,7 @@ const tick = async () => {
           : 'passes every safety metric, has a website, thinner utility proof — DYOR.';
         const ok = await sendTelegram(`${head}\n${label}\n${body}\n${t.market}\n${t.stats}\n${url}`);
         if (ok) console.log(`[watcher] alerted ${t.level} ${t.symbol} on ${chain}`);
-        seen[t.addr] = { ts: Date.now(), level: t.level };
+        seen[seenKey] = { ts: Date.now(), level: t.level };
         // Persist immediately — a crash mid-tick must never forget a sent
         // alert, or it repeats after the systemd restart.
         writeFileSync(SEEN_PATH, JSON.stringify(seen, null, 2));

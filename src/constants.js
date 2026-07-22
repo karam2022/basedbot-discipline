@@ -14,8 +14,13 @@ BBD.DEFAULT_SETTINGS = Object.freeze({
   // stopLossPct so losers get cut, not just winners taken.
   stopLossEnabled: true,
   stopLossPct: 25,
-  // Trade journal: log every position's entry safety snapshot, peak, and
-  // realized exit so the popup can show win rate and profit given back.
+  // Warn when an open winner falls this many percentage points from its
+  // observed peak. This turns the journal's peak into an actionable trailing
+  // discipline rule without executing trades.
+  peakGivebackEnabled: true,
+  peakGivebackPct: 15,
+  // Trade journal: log every position's entry safety snapshot, peak, and last
+  // fresh exit estimate so the popup can show behavior metrics honestly.
   journalEnabled: true,
   // Anti-FOMO guards (driven by the journal): a daily losing-trade limit that
   // shows a "step away" overlay, and a revenge-trade warning when you reopen a
@@ -23,10 +28,14 @@ BBD.DEFAULT_SETTINGS = Object.freeze({
   fomoGuardEnabled: true,
   dailyLossLimit: 3,
   revengeWindowMin: 60,
+  // A close is only classified as win/loss when the last PnL sample was fresh.
+  // Older samples are kept as estimates, but never drive revenge/loss guards.
+  exitSampleMaxAgeSec: 60,
   // Dump alerts: watch the trade feed of held positions and ping when the dev
   // sells, or a single sell exceeds whaleSellUsd. Only recent trades count.
   dumpAlertsEnabled: true,
   whaleSellUsd: 300,
+  whaleSellLiquidityPct: 2,
   dumpWindowMin: 3,
   // Utility-score thresholds: hide below minScore, flag gems at gemMinScore.
   minScore: 2,
@@ -78,15 +87,17 @@ BBD.DEFAULT_SETTINGS = Object.freeze({
 // chrome.storage.local keys.
 BBD.KEYS = Object.freeze({
   settings: 'settings',   // user settings (merged over DEFAULT_SETTINGS)
-  positions: 'positions', // { [addr]: { symbol, pct, usd, ts } }
-  snoozes: 'snoozes',     // { [addr]: untilTimestampMs }
-  dismissed: 'dismissed', // { [addr]: pctAtDismissal }
+  positions: 'positions', // { [positionKey]: { addr, chain, wallet, pct, sourceTs, ... } }
+  snoozes: 'snoozes',     // { [positionKey]: untilTimestampMs }
+  dismissed: 'dismissed', // { [positionKey]: pctAtDismissal }
   overrides: 'overrides', // { [addr]: 'hide' | 'show' }
   intel: 'intel',         // { [addr]: parsed Token Info metrics + ts }
   alerted: 'alerted',     // { [addr]: ts } — 🔥 telegram dedupe, 24h TTL
   creators: 'creators',   // { [creatorAddr]: { tokens: { [addr]: {...} }, ts } }
-  journal: 'journal',     // { [addr]: { symbol, openTs, closeTs, entryVerdict, peakPct, exitPct, status } }
-  daystats: 'daystats'    // { lossDismissedDay: 'YYYY-MM-DD' } — per-day guard dismissals
+  journal: 'journal',     // { [tradeId]: { positionKey, addr, openTs, closeTs, ... } }
+  daystats: 'daystats',   // { lossDismissedDay: 'YYYY-MM-DD' } — per-day guard dismissals
+  guardDismissed: 'guardDismissed', // { [tradeId]: ts } — dismissed revenge advisories
+  positionsMeta: 'positionsMeta'     // { source, sourceTs, syncedTs } — data-health status
 });
 
 // Score penalty for a card whose creator is a flagged serial launcher/rugger.
@@ -102,6 +113,7 @@ BBD.STALE_MS = 30 * 60 * 1000;   // position data older than this is labeled sta
 BBD.SCAN_DEBOUNCE_MS = 300;
 BBD.POLL_MS = 5000;
 BBD.ROUTE_POLL_MS = 1000;
+BBD.BALANCES_TTL_MS = 2 * 60 * 1000;
 
 // Short/ambiguous keywords need word boundaries so BUTTERCOIN doesn't match
 // "butt" or Catalyst "cat"; distinctive meme words still match as substrings
@@ -143,6 +155,41 @@ BBD.tokenAddrFromHref = (href) => {
   // Hex EVM addresses are case-insensitive — normalize for stable map keys.
   // Base58 Solana addresses are case-SENSITIVE — lowercasing breaks URLs (#5).
   return m[1].startsWith('0x') ? m[1].toLowerCase() : m[1];
+};
+
+// Position identity must include chain and wallet: identical EVM contract
+// addresses can exist on multiple chains, and BasedBot may expose more than
+// one connected wallet. Legacy address-only entries remain readable.
+BBD.positionKey = (addr, chain, wallet) => {
+  if (!addr) return null;
+  const safeChain = String(chain || 'unknown').toLowerCase().replace(/[^a-z0-9_-]/g, '') || 'unknown';
+  const safeWallet = String(wallet || 'default').replace(/[^a-zA-Z0-9_-]/g, '') || 'default';
+  return `${safeChain}|${safeWallet}|${addr}`;
+};
+
+BBD.positionAddr = (key, position) => {
+  if (position && position.addr) return position.addr;
+  const raw = String(key || '');
+  return raw.includes('|') ? raw.slice(raw.lastIndexOf('|') + 1) : raw;
+};
+
+BBD.positionIsToken = (key, position, addr, chain) => {
+  if (!addr || BBD.positionAddr(key, position) !== addr) return false;
+  if (!chain || !position || !position.chain) return true;
+  return String(position.chain).toLowerCase() === String(chain).toLowerCase();
+};
+
+BBD.isHeld = (positions, addr, chain) => Object.entries(positions || {})
+  .some(([key, p]) => BBD.positionIsToken(key, p, addr, chain) &&
+    Date.now() - (p && (p.sourceTs || p.ts) || 0) <= BBD.STALE_MS);
+
+// Local-day key, unlike toISOString(), agrees with the local-midnight logic
+// used by the daily-loss guard around timezone boundaries.
+BBD.localDayKey = (date = new Date()) => {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
 };
 
 // Page-controlled text (token symbols/names) goes into Telegram messages and

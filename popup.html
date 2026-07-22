@@ -118,9 +118,17 @@
       color: var(--text); font-weight: 600;
       font-variant-numeric: tabular-nums;
     }
+    #health { padding: 4px 0; }
+    #health div {
+      display: flex; justify-content: space-between; gap: 12px;
+      padding: 5px 0; border-bottom: 1px solid var(--border);
+    }
+    #health div:last-child { border-bottom: none; }
+    #health span:first-child { color: var(--muted); font-size: 12px; }
+    #health span:last-child { font-weight: 600; text-align: right; }
 
     /* Inputs */
-    input[type="number"], input[type="text"] {
+    input[type="number"], input[type="text"], input[type="password"] {
       background: var(--field);
       color: var(--text);
       border: 1px solid var(--border-strong);
@@ -201,6 +209,15 @@
       font: 11px system-ui, sans-serif;
     }
     .link-btn:hover { color: var(--danger); }
+    .action-btn {
+      border: 1px solid var(--border-strong); border-radius: 8px;
+      padding: 6px 10px; background: var(--field); color: var(--text);
+      font: 600 11px system-ui, sans-serif; cursor: pointer;
+    }
+    .action-btn:hover { border-color: var(--accent); }
+    .action-btn:disabled { opacity: .55; cursor: default; }
+    .button-row { display: flex; gap: 7px; padding: 10px 0; }
+    .secret-wrap { display: flex; align-items: center; gap: 5px; }
     .card-head {
       display: flex; align-items: center; justify-content: space-between;
       padding: 11px 0 3px;
@@ -213,6 +230,7 @@
       text-align: center; padding-top: 6px;
       background: linear-gradient(transparent, var(--bg) 60%);
     }
+    #status.error { color: var(--danger); }
   </style>
 </head>
 <body>
@@ -264,6 +282,11 @@
       <input type="checkbox" id="stopLossEnabled" class="switch" />
     </label>
     <label class="row">
+      <span class="row-text"><span class="row-label">Peak give-back warning</span>
+        <span class="row-hint">🟠 protect a winner that falls from its peak</span></span>
+      <input type="checkbox" id="peakGivebackEnabled" class="switch" />
+    </label>
+    <label class="row">
       <span class="row-text"><span class="row-label">Anti-FOMO guards</span>
         <span class="row-hint">🛑 daily loss limit + revenge-buy warning</span></span>
       <input type="checkbox" id="fomoGuardEnabled" class="switch" />
@@ -282,9 +305,17 @@
   <div class="card">
     <div class="card-head">
       <span class="section-title">Journal</span>
-      <button id="clearJournal" type="button" class="link-btn">clear</button>
+      <span>
+        <button id="exportJournal" type="button" class="link-btn">export</button>
+        <button id="clearJournal" type="button" class="link-btn">clear</button>
+      </span>
     </div>
     <div id="journal"><span class="hint">No closed trades yet.</span></div>
+  </div>
+
+  <div class="card">
+    <div class="card-head"><span class="section-title">Data health</span></div>
+    <div id="health"><span class="hint">Waiting for BasedBot data…</span></div>
   </div>
 
   <div class="section-title">Alerts</div>
@@ -294,13 +325,16 @@
       <input type="checkbox" id="notifyEnabled" class="switch" />
     </label>
     <label class="row">
-      <span class="row-text"><span class="row-label">🔥 Telegram alerts (this laptop)</span>
+      <span class="row-text"><span class="row-label">🔥/💎 Discovery alerts (this laptop)</span>
         <span class="row-hint">off if a VPS watcher already covers you</span></span>
       <input type="checkbox" id="laptopHotAlerts" class="switch" />
     </label>
     <div class="field-row">
       <label for="tgToken">Bot token</label>
-      <input type="text" id="tgToken" style="width:150px" placeholder="123456:ABC…" />
+      <span class="secret-wrap">
+        <input type="password" id="tgToken" style="width:128px" placeholder="123456:ABC…" />
+        <button id="toggleToken" type="button" class="action-btn" aria-label="Show bot token">show</button>
+      </span>
     </div>
     <div class="field-row">
       <label for="tgChatId">Chat ID</label>
@@ -310,14 +344,23 @@
       <span class="hint">Create a bot with @BotFather, get your ID from @userinfobot,
       then message your bot once.</span>
     </div>
+    <div class="button-row">
+      <button id="testTelegram" type="button" class="action-btn">Send test alert</button>
+    </div>
   </div>
 
   <details class="advanced">
     <summary>Advanced settings</summary>
     <div class="advanced-body">
+      <div class="sub-title">Quick preset</div>
+      <div class="button-row">
+        <button id="presetConservative" type="button" class="action-btn">Conservative</button>
+        <button id="presetBalanced" type="button" class="action-btn">Balanced</button>
+      </div>
       <div class="sub-title">Take-profit &amp; stop-loss</div>
       <div class="field-row"><label>Remind when up %</label><input type="number" id="thresholdPct" min="1" max="1000" /></div>
       <div class="field-row"><label>Nag when down %</label><input type="number" id="stopLossPct" min="1" max="100" /></div>
+      <div class="field-row"><label>Warn after giving back points</label><input type="number" id="peakGivebackPct" min="1" max="1000" /></div>
       <div class="field-row"><label>Snooze length (min)</label><input type="number" id="snoozeMin" min="1" max="240" /></div>
 
       <div class="sub-title">Anti-FOMO</div>
@@ -325,6 +368,7 @@
 
       <div class="sub-title">Dump alerts</div>
       <div class="field-row"><label>Whale sell alert over $</label><input type="number" id="whaleSellUsd" min="1" max="1000000" /></div>
+      <div class="field-row"><label>…and over % of liquidity</label><input type="number" id="whaleSellLiquidityPct" min="0.1" max="100" step="0.1" /></div>
 
       <div class="sub-title">Utility score</div>
       <div class="field-row"><label>Hide below score</label><input type="number" id="minScore" min="-10" max="10" /></div>

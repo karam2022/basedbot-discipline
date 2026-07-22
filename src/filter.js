@@ -10,7 +10,8 @@ BBD.filter = (() => {
   let peeking = false;
   let filterOn = true; // reflects settings.filterEnabled for the chip label
   let hiOn = true;     // reflects settings.hotEnabled for the chip label
-  const hotSeen = new Set(); // addrs already notified this session
+  const hotSeen = new Set(); // level:addr already notified this session
+  const discoveryRetryAt = new Map();
 
   const isPulse = () => location.pathname.startsWith('/pulse');
 
@@ -125,7 +126,7 @@ BBD.filter = (() => {
     const hot = !kwHit && !badDev && !danger && isHot(stats, social, settings);
     const gem = score >= settings.gemMinScore;
     const positive = hot ? 'hot' : gem ? 'gem' : 'show';
-    if (info.addr && positions[info.addr]) return positive; // held: never hide
+    if (info.addr && BBD.isHeld(positions, info.addr)) return positive; // held: never hide
     if (info.addr && overrides[info.addr] === 'show') return positive;
     if (info.addr && overrides[info.addr] === 'hide') return 'hide';
     if (hot || gem) return positive;
@@ -246,14 +247,15 @@ BBD.filter = (() => {
     if (chip.style.display !== display) chip.style.display = display;
   };
 
-  // 🔥 alerts go to Telegram ONLY (background routes on target) — Chrome
+  // 🔥/💎 discovery alerts go to Telegram ONLY (background routes on target) — Chrome
   // notifications are reserved for take-profit on held positions.
   // Real dedupe lives in the background worker, which serializes checks across
   // all tabs (#3); hotSeen just avoids re-messaging every scan pass.
-  const notifyHot = (info, settings, stats) => {
+  const notifyDiscovery = async (info, settings, stats, level) => {
     if (!settings.laptopHotAlerts) return;
-    if (!info.addr || hotSeen.has(info.addr)) return;
-    hotSeen.add(info.addr);
+    const seenKey = `${level}:${info.addr}`;
+    if (!info.addr || hotSeen.has(seenKey) || (discoveryRetryAt.get(seenKey) || 0) > Date.now()) return;
+    hotSeen.add(seenKey);
     const chain = (location.pathname.match(/^\/pulse\/([^/]+)/) || [])[1];
     const statLine = stats
       ? ` top10 ${stats.top10}% · dev ${stats.dev}% · snipers ${stats.snipers}% · ` +
@@ -261,15 +263,23 @@ BBD.filter = (() => {
       : '';
     const symbol = BBD.sanitizeAlertText(info.symbol, 20) || info.addr.slice(0, 8);
     try {
-      chrome.runtime.sendMessage({
+      const result = await chrome.runtime.sendMessage({
         type: 'bbd-notify',
         target: 'telegram',
-        dedupe: { key: `hot:${info.addr}` },
-        title: '🔥 Best guess on Pulse (laptop)',
-        message: `${symbol} passes every safety metric.${statLine}`,
+        dedupe: { key: `${level}:${chain || 'unknown'}:${info.addr}` },
+        title: level === 'hot' ? '🔥 Best guess on Pulse (laptop)' : '💎 Possible gem on Pulse (laptop)',
+        message: level === 'hot'
+          ? `${symbol} passes every safety metric.${statLine}`
+          : `${symbol} has a strong score but still needs review.${statLine}`,
         url: chain ? `${location.origin}/token/${chain}/${info.addr}` : undefined
       });
+      if (!result || !result.ok) {
+        hotSeen.delete(seenKey);
+        discoveryRetryAt.set(seenKey, Date.now() + 60 * 1000);
+      }
     } catch (err) {
+      hotSeen.delete(seenKey);
+      discoveryRetryAt.set(seenKey, Date.now() + 60 * 1000);
       console.warn('[bbd] hot notify failed', err);
     }
   };
@@ -282,9 +292,11 @@ BBD.filter = (() => {
     const settings = await BBD.store.settings();
     filterOn = settings.filterEnabled;
     hiOn = settings.hotEnabled;
-    // Hiding and highlighting are independent (v1.8.2): only bail when BOTH are
-    // off, so turning off "Hide meme coins" no longer kills 🔥/💎 highlights.
-    if (!filterOn && !hiOn) {
+    // Every feed feature is independent. Safety readout / audit / creator flags
+    // must keep working even when hiding and 🔥/💎 highlights are disabled.
+    const anyFeedFeature = filterOn || hiOn || settings.cardIntelEnabled ||
+      settings.creatorGuardEnabled || settings.auditGuardEnabled;
+    if (!anyFeedFeature) {
       teardown();
       return;
     }
@@ -334,9 +346,10 @@ BBD.filter = (() => {
       ensureCardIntel(card, stats, settings, intel[info.addr], settings.cardIntelEnabled && !doHide);
       if (doHide) hidden += 1;
       if (doGem) gems += 1;
+      if (doGem) notifyDiscovery(info, settings, stats, 'gem');
       if (doHot) {
         hots += 1;
-        notifyHot(info, settings, stats);
+        notifyDiscovery(info, settings, stats, 'hot');
       }
       ensureOverrideBtn(card, info, state);
     }

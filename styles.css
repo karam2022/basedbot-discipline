@@ -259,6 +259,8 @@ a[href*="/token/"]:hover .bbd-override,
   transform: translateX(-50%);
   z-index: 2147483000;
   display: none;
+  align-items: center;
+  gap: 10px;
   max-width: 80vw;
   padding: 8px 16px;
   background: #292112;
@@ -268,6 +270,17 @@ a[href*="/token/"]:hover .bbd-override,
   font: 600 12px/1.4 system-ui, sans-serif;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.45);
 }
+#bbd-guard-revenge button {
+  flex: none;
+  border: 0;
+  border-radius: 999px;
+  padding: 3px 10px;
+  background: #92400e;
+  color: #fef3c7;
+  font: 700 11px/1.5 system-ui, sans-serif;
+  cursor: pointer;
+}
+#bbd-guard-revenge button:hover { background: #78350f; }
 
 /* Take-profit banner */
 #bbd-banner {
@@ -307,6 +320,9 @@ a.bbd-banner-msg:hover {
 /* Loss rows read red even inside the mixed (winners + losers) banner. */
 .bbd-banner-row-loss .bbd-banner-msg {
   color: #fecaca;
+}
+.bbd-banner-row-giveback .bbd-banner-msg {
+  color: #fde68a;
 }
 /* Mixed banner: calm the pulsing green edge once a loss is present. */
 #bbd-banner.bbd-has-loss {

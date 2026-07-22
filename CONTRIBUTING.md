@@ -9,6 +9,10 @@ PRs welcome. Keep it in the spirit of the tool:
 - Plain unminified JS, no build step, files small and focused.
 - If you change scoring thresholds, say why in the PR — ideally with examples
   of real tokens the change would have caught or spared.
+- Run `node --test test/*.test.js` and syntax-check changed scripts before a PR.
+- Position identity is `chain|wallet|token`; journal entries are immutable trade
+  cycles. Never return to address-keyed journal writes or treat stale unrealized
+  PnL as an exact realized exit.
 
 Good first contributions: new launchpad badge names as basedbot adds chains,
 meme-keyword list improvements per language/meta, selector fixes when

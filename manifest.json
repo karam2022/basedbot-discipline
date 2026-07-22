@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "BasedBot Discipline",
-  "version": "1.8.2",
-  "description": "Hides meme coins on basedbot Pulse and nags you to take profit when positions are in the green.",
+  "version": "1.9.0",
+  "description": "Risk-ranked Pulse feed, position discipline, trade journal, anti-FOMO and dev/dump alerts for BasedBot.",
   "permissions": ["storage", "notifications", "unlimitedStorage"],
   "host_permissions": ["https://basedbot.app/*", "https://api.telegram.org/*"],
   "background": { "service_worker": "background.js" },

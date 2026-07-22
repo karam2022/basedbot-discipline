@@ -9,6 +9,7 @@ BBD.dump = (() => {
   const seen = new Set(); // tx_hash already alerted this session
   const MAX_POSITIONS = 8; // cap active polling
   const MAX_SEEN = 5000;
+  let cursor = 0;
 
   // Server timestamps are "YYYY-MM-DD HH:MM:SS" in UTC.
   const parseTs = (s) => {
@@ -18,16 +19,22 @@ BBD.dump = (() => {
 
   // Pure: which recent sells in this trade list are a dev sell or a whale sell.
   const detect = (trades, { creatorAddr, whaleSellUsd, now, windowMs }) => {
-    const dev = creatorAddr ? String(creatorAddr).toLowerCase() : null;
+    const dev = creatorAddr ? String(creatorAddr) : null;
+    const sameAddr = (a, b) => {
+      if (!a || !b) return false;
+      return a.startsWith('0x') && b.startsWith('0x')
+        ? a.toLowerCase() === b.toLowerCase()
+        : a === b; // base58 addresses are case-sensitive
+    };
     const out = [];
     for (const t of Array.isArray(trades) ? trades : []) {
       if (!t || t.is_buy !== false) continue; // sells only
       const ts = parseTs(t.timestamp);
-      if (ts !== null && windowMs && now - ts > windowMs) continue; // too old
+      if (windowMs && (ts === null || now - ts > windowMs || ts - now > 60 * 1000)) continue;
       const vol = Number(t.volume_usd);
       const volumeUsd = Number.isFinite(vol) && vol >= 0 ? vol : 0;
       const trader = typeof t.trader_full === 'string' ? t.trader_full : '';
-      if (dev && trader.toLowerCase() === dev) {
+      if (dev && sameAddr(trader, dev)) {
         out.push({ kind: 'dev', txHash: t.tx_hash, volumeUsd, trader });
       } else if (volumeUsd >= whaleSellUsd) {
         out.push({ kind: 'whale', txHash: t.tx_hash, volumeUsd, trader });
@@ -43,7 +50,7 @@ BBD.dump = (() => {
     try {
       chrome.runtime.sendMessage({
         type: 'bbd-notify',
-        dedupe: { key: `dump:${hit.txHash}` },
+        dedupe: { key: `dump:${pos.chain || 'unknown'}:${hit.txHash}` },
         title: dev ? `🚨 DEV is selling ${sym}` : `🐋 Whale dumped ${sym}`,
         message: dev
           ? `The creator just sold ${usd} of ${sym} — your bag may be next.`
@@ -60,12 +67,19 @@ BBD.dump = (() => {
       const settings = await BBD.store.settings();
       if (!settings.dumpAlertsEnabled) return;
       const positions = await BBD.store.get(BBD.KEYS.positions, {});
-      const addrs = Object.keys(positions).slice(0, MAX_POSITIONS);
-      if (!addrs.length) return;
+      const all = Object.entries(positions).map(([positionKey, p]) => ({
+        positionKey, ...p, addr: BBD.positionAddr(positionKey, p)
+      })).filter((p) => p.addr && typeof p.sourceTs === 'number' &&
+        Date.now() - p.sourceTs <= BBD.STALE_MS);
+      if (!all.length) return;
+      const selected = Array.from({ length: Math.min(MAX_POSITIONS, all.length) },
+        (_, i) => all[(cursor + i) % all.length]);
+      cursor = (cursor + selected.length) % all.length;
       const now = Date.now();
       const windowMs = settings.dumpWindowMin * 60 * 1000;
       if (seen.size > MAX_SEEN) seen.clear();
-      for (const addr of addrs) {
+      for (const pos of selected) {
+        const addr = pos.addr;
         let trades;
         try {
           const res = await fetch(`/api/token/${addr}/trades`, { credentials: 'same-origin' });
@@ -75,16 +89,19 @@ BBD.dump = (() => {
         } catch (e) {
           continue; // endpoint hiccup — try again next tick
         }
+        const market = BBD.feed.marketFor(addr);
+        const liquidityThreshold = market && typeof market.liq === 'number'
+          ? market.liq * settings.whaleSellLiquidityPct / 100 : 0;
         const hits = detect(trades, {
           creatorAddr: BBD.feed.creatorFor(addr),
-          whaleSellUsd: settings.whaleSellUsd,
+          whaleSellUsd: Math.max(settings.whaleSellUsd, liquidityThreshold),
           now,
           windowMs
         });
         for (const hit of hits) {
           if (!hit.txHash || seen.has(hit.txHash)) continue;
           seen.add(hit.txHash);
-          notify(positions[addr], hit);
+          notify(pos, hit);
         }
       }
     } catch (err) {

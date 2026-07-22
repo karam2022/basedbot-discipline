@@ -5,7 +5,8 @@ endpoints. Gated behind `fomoGuardEnabled`.
 
 ## Daily loss limit
 
-`guard.lossesToday(journal)` counts trades **closed today** with `exitPct < 0`.
+`guard.lossesToday(journal)` counts trades **closed today** with a fresh,
+estimated `exitPct < 0`. Stale/unknown exits are excluded.
 Once that reaches `dailyLossLimit` (default 3), a fixed "step away" overlay
 (`#bbd-fomo`) appears on every basedbot page. "Dismiss for today" records the
 date in the `daystats` key (`lossDismissedDay`) so it stays gone until tomorrow;
@@ -13,10 +14,11 @@ date in the `daystats` key (`lossDismissedDay`) so it stays gone until tomorrow;
 
 ## Revenge trade
 
-On a token page, `guard.recentLoss(entry, revengeWindowMin)` checks the journal
-entry for that token: if you closed it at a loss within `revengeWindowMin`
-(default 60) minutes, a warning (`#bbd-guard-revenge`) reminds you that you just
-sold it in the red — thesis or FOMO?
+On a token page, the guard finds the latest closed trade for that wallet/chain/
+token. It warns only when the token is currently held again and the last fresh
+exit estimate was negative within `revengeWindowMin` (default 60 minutes).
+Simply viewing a sold token does not warn. The advisory has a **Dismiss** button;
+its trade ID is stored in `guardDismissed` so it stays closed.
 
 ## Not included: position-size guard
 

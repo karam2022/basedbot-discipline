@@ -1,12 +1,14 @@
 # BasedBot Discipline
 
-A Chrome extension for [basedbot.app](https://basedbot.app) that does two things
-most traders wish they did themselves:
+A Chrome extension for [basedbot.app](https://basedbot.app) that adds a local
+discipline and risk layer:
 
-1. **Cleans your Pulse feed** — hides meme spam, keeps utility projects visible,
-   and highlights the rare token that passes every safety check.
-2. **Nags you to take profit** — when a coin you actually hold goes green past
-   your threshold, it puts a banner in your face until you act.
+1. **Cleans and risk-ranks Pulse** — hides noise, explains failed safety checks,
+   and flags risky contracts and repeat-offender creators.
+2. **Monitors positions** — take-profit, stop-loss, peak give-back and dump alerts.
+3. **Records trade cycles** — immutable local journal, even when the same token
+   is bought repeatedly.
+4. **Interrupts bad loops** — daily loss limit and a dismissible revenge-buy warning.
 
 No auto-trading. It never touches the buy or sell button. It reads what's on
 the page and tells you what it sees. Nothing leaves your browser except the
@@ -75,11 +77,33 @@ persistent green banner on every basedbot page:
 - **Snooze** silences it for 15 minutes (configurable).
 - **Dismiss** silences it until the gain climbs another 10 points, then it
   comes back. It is supposed to be annoying.
+- **Peak give-back** warns when a winner falls 15 percentage points from its
+  observed peak (configurable).
+- **Stop-loss** uses its own independent threshold and keeps working even when
+  take-profit reminders are disabled.
 - Optional Chrome notification when a position first crosses the threshold —
   the only thing that ever hits your desktop notifications.
 
 A common pattern from profitable traders: treat the banner as "sell half",
 not "sell all". Book the gain, keep a core.
+
+Position data carries its original API timestamp. Stale snapshots do not fire
+action alerts and the popup shows the current data-source health.
+
+### 📓 Journal and anti-FOMO guard
+
+Each open/close cycle has a separate trade ID keyed by wallet, chain and token.
+Buying the same token again no longer overwrites the previous result. Because
+BasedBot currently supplies unrealized PnL for open balances, the exit percentage
+is explicitly an estimate from the last fresh sample; an old sample is never
+counted as a realized loss.
+
+Older v1 journal exits did not contain sample timestamps, so they are migrated
+as “closed without fresh exit” instead of being trusted as wins or losses.
+
+The revenge warning appears only if the token is actually held again after a
+recent tracked loss. It has a **Dismiss** button. Merely viewing a token after
+selling it never triggers the warning.
 
 ### 📱 Telegram alerts (optional)
 
@@ -91,6 +115,8 @@ those). Take-profit alerts go to both. Setup:
 3. Paste the token into the extension popup. The chat ID fills itself in —
    the extension discovers it automatically. (If you want to enter it by
    hand: message **@userinfobot** for your numeric ID.)
+4. Click **Send test alert**. Failed deliveries are retried; they are no longer
+   marked as sent before Telegram confirms success.
 
 ### ↻ Refresh button
 
@@ -128,7 +154,10 @@ farms that looked identical on the surface.
 |---|---|---|
 | Hide meme coins on Pulse | on | The filter itself |
 | 🔥 Best-guess highlight | on | The green ribbon system |
-| Take-profit reminders | on | Banner + PnL tracking |
+| Take-profit reminders | on | Profit banner only; position tracking is shared and independent |
+| Stop-loss / peak give-back | 25% / 15 points | Independent loss and trailing-profit warnings |
+| Trade journal / Anti-FOMO | on / on | Per-cycle history, daily loss and revenge-buy guards |
+| Dump alerts | on | Dev/whale sells; threshold adapts to pool liquidity |
 | Chrome notifications | off | Desktop ping on threshold cross |
 | Remind when up | 20% | Take-profit threshold |
 | Snooze length | 15 min | Banner snooze |
@@ -136,6 +165,10 @@ farms that looked identical on the surface.
 | Meme launchpad badges | Pons, Pump.fun, Zora, Clanker, ... | Which launchpads count against a token's score |
 | Meme keywords | pepe, inu, ... | Names that get hidden outright. Edit freely |
 | Telegram token / chat ID | empty | See Telegram section |
+
+Advanced settings include **Conservative** and **Balanced** presets; they adjust
+discipline/risk thresholds without overwriting Telegram credentials, custom
+keywords or per-token overrides.
 
 ---
 
@@ -148,6 +181,10 @@ Permanent. If it happens a lot, lower "Hide below score" to 1 or 0.
 
 **The chip count froze / weird behavior after updating.** After any reload of
 the extension in `chrome://extensions`, refresh your basedbot tabs once.
+
+**A revenge warning is wrong or no longer useful.** It now appears only while
+you hold the token again and can be dismissed. Exit PnL is never inferred from
+a balance sample older than 60 seconds.
 
 **Do 🔥 tokens go up?** Unknowable. 🔥 means the on-chain structure is clean
 and there's evidence of a real project — it filters out the 95% that are
@@ -177,8 +214,8 @@ extension.
 ## Disclaimers, honestly
 
 - Not financial advice. The filter reduces noise; it cannot see the future.
-- The extension reads basedbot's UI. If basedbot redesigns their pages, parts
-  may stop working until updated.
+- The extension primarily reads BasedBot's own JSON responses and uses the DOM
+  as a fallback. A major API or page redesign can still require an update.
 - Memecoin trading on fresh launchpads is a negative-sum knife fight. The
   take-profit banner exists because the house edge is your own greed. Listen
   to it.

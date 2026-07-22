@@ -71,6 +71,7 @@ BBD.store = {
     await this.pruneMap(BBD.KEYS.intel, { maxAgeMs: 7 * DAY });
     await this.pruneMap(BBD.KEYS.positions, { maxAgeMs: 7 * DAY });
     await this.pruneMap(BBD.KEYS.alerted, { maxAgeMs: 3 * DAY, maxEntries: 1000 });
+    await this.pruneMap(BBD.KEYS.guardDismissed, { maxAgeMs: 2 * DAY, maxEntries: 1000 });
     // Creator reputation is long-lived by design; keep 30 days and cap the map
     // so a heavy Pulse browser can't grow it without bound.
     await this.pruneMap(BBD.KEYS.creators, { maxAgeMs: 30 * DAY, maxEntries: 2000 });
@@ -89,7 +90,7 @@ BBD.store = {
     }
     // daystats holds only the current day's guard dismissals — drop yesterday's
     const daystats = await this.get(BBD.KEYS.daystats, {});
-    if (daystats.lossDismissedDay && daystats.lossDismissedDay !== new Date().toISOString().slice(0, 10)) {
+    if (daystats.lossDismissedDay && daystats.lossDismissedDay !== BBD.localDayKey()) {
       await this.set(BBD.KEYS.daystats, {});
     }
     // dismissed entries only matter while the position is still held
@@ -98,7 +99,8 @@ BBD.store = {
       this.get(BBD.KEYS.positions, {})
     ]);
     const liveDismissed = Object.fromEntries(
-      Object.entries(dismissed).filter(([addr]) => positions[addr])
+      Object.entries(dismissed).filter(([key]) => positions[key] ||
+        (key.startsWith('peak:') && positions[key.slice('peak:'.length)]))
     );
     if (Object.keys(liveDismissed).length !== Object.keys(dismissed).length) {
       await this.set(BBD.KEYS.dismissed, liveDismissed);

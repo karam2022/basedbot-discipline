@@ -13,8 +13,9 @@ BBD.feed = (() => {
   const creator = new Map(); // addr -> creatorAddress (for the creator guard)
   const market = new Map();  // addr -> { liq, mcap, isLaunchpad, symbol, ts }
   const audit = new Map();   // addr -> { danger, critical, ownerRenounced, reasons, ts }
-  const balances = new Map(); // addr -> { symbol, pct, usd, chain, ts } (held positions)
+  const balances = new Map(); // positionKey -> validated held-position snapshot
   let balancesSeen = false;
+  let balancesTs = 0;
   let prices = {};           // { ETH: number, SOL: number, ... }
 
   // metadata/batch keys carry a chain suffix ("0x…-4663"); metrics keys don't.
@@ -188,23 +189,35 @@ BBD.feed = (() => {
   const takeBalances = (wallets) => {
     if (!Array.isArray(wallets)) return;
     const next = new Map();
-    for (const w of wallets) {
+    const sourceTs = Date.now();
+    wallets.forEach((w, walletIndex) => {
       const toks = w && Array.isArray(w.tokens) ? w.tokens : [];
+      const walletRaw = w && (w.wallet || w.walletAddress || w.address || w.owner);
+      const wallet = isAddr(walletRaw) ? normAddr(walletRaw) : `wallet${walletIndex}`;
       for (const t of toks) {
         if (!t || !isAddr(t.token)) continue;
+        const addr = normAddr(t.token);
         const rel = t.pnl && Number(t.pnl.relative);
+        const abs = t.pnl && Number(t.pnl.absolute);
         const chainRaw = (t.pool && t.pool.chain) || t.network;
-        next.set(normAddr(t.token), {
+        const chain = typeof chainRaw === 'string' ? chainRaw.toLowerCase() : null;
+        const positionKey = BBD.positionKey(addr, chain, wallet);
+        next.set(positionKey, {
+          positionKey,
+          addr,
           symbol: typeof t.symbol === 'string' ? t.symbol : '',
           pct: Number.isFinite(rel) ? rel : null,
-          usd: usd(t.valueUsd),
-          chain: typeof chainRaw === 'string' ? chainRaw.toLowerCase() : null,
-          ts: Date.now()
+          pnlUsd: Number.isFinite(abs) ? abs : null,
+          valueUsd: usd(t.valueUsd),
+          chain,
+          wallet,
+          sourceTs
         });
       }
-    }
+    });
     balances.clear();
     for (const [k, v] of next) balances.set(k, v);
+    balancesTs = sourceTs;
     balancesSeen = true; // an empty holdings list is still authoritative (all sold)
   };
 
@@ -236,14 +249,16 @@ BBD.feed = (() => {
   const auditFor = (addr) => (addr && audit.get(addr)) || null;
   const priceOf = (sym) => (sym && prices[sym]) || null;
   const ethPrice = () => prices.ETH || null;
-  // Held positions from the balances API. hasBalances() gates pnl.js switching
-  // off DOM scraping — until the app's first balances fetch is tapped, we can't
-  // tell "no positions" from "not loaded yet".
-  const heldPositions = () => [...balances.entries()].map(([addr, v]) => ({ addr, ...v }));
+  // Held positions from the balances API. Freshness gates pnl.js switching off
+  // DOM fallback — until the first fetch is tapped, "no positions" cannot be
+  // distinguished from "not loaded yet".
+  const heldPositions = () => [...balances.values()].map((v) => ({ ...v }));
   const hasBalances = () => balancesSeen;
+  const hasFreshBalances = () => balancesSeen && Date.now() - balancesTs < BBD.BALANCES_TTL_MS;
+  const balancesUpdatedAt = () => balancesTs || null;
 
   return {
     statsFor, titlesFor, creatorFor, marketFor, auditFor, priceOf, ethPrice,
-    heldPositions, hasBalances
+    heldPositions, hasBalances, hasFreshBalances, balancesUpdatedAt
   };
 })();

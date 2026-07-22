@@ -27,10 +27,11 @@ BBD.intel = (() => {
   const expandPanel = (addr) => {
     if (document.body.innerText.includes('Top 10 H.')) return;
     if (addr && autoExpanded.has(addr)) return;
+    const btn = [...document.querySelectorAll('button')]
+      .find((el) => el.textContent.trim() === 'Token Info');
+    if (!btn) return;
     if (addr) autoExpanded.add(addr);
-    [...document.querySelectorAll('div,button,span')]
-      .filter((el) => el.textContent.trim() === 'Token Info' && el.childElementCount <= 1)
-      .forEach((el) => el.click());
+    btn.click();
   };
 
   // Values render BEFORE their label ("19% § Top 10 H.").
