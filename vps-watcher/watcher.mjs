@@ -101,7 +101,11 @@ const pollUpdates = async () => {
       // watchlist must not be writable by strangers. (/firehose is exempt:
       // binding a new chat is the one command that must work from anywhere.)
       const bound = fromChat === String(tgChatId) || fromChat === String(tgFirehoseChatId);
-      if (!bound && txt.split(/\s+/)[0].split('@')[0] !== '/firehose') continue;
+      // /firehose may come from a new (unbound) group, but only from the OWNER:
+      // in a private chat, chat id == user id, so tgChatId doubles as owner id.
+      const fromOwner = String(u.message.from && u.message.from.id) === String(tgChatId);
+      const isFirehoseCmd = txt.split(/\s+/)[0].split('@')[0] === '/firehose';
+      if (!bound && !(isFirehoseCmd && fromOwner)) continue;
       const reply = (text) => tg('sendMessage', { chat_id: u.message.chat.id, text });
       const [cmdRaw, ...args] = txt.split(/\s+/);
       const cmd = cmdRaw.split('@')[0];
