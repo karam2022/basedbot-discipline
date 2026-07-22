@@ -335,11 +335,21 @@ const sitePeek = async (url) => {
   return out;
 };
 
+const PLATFORM_HOSTS = ['github.com', 'gitbook.io', 'notion.site', 'notion.so', 'linktr.ee',
+  'medium.com', 'substack.com', 'vercel.app', 'netlify.app', 'webflow.io', 'carrd.co'];
 const domainMatchesToken = (url, symbol, name) => {
   try {
-    const host = new URL(url).hostname.replace(/^www\./, '').split('.')[0].toLowerCase();
+    const u = new URL(url);
+    const host = u.hostname.replace(/^www\./, '').toLowerCase();
+    // On platform hosts the project's identity is the path (github.com/RobinhoodCoin),
+    // not the domain — comparing against "github" would flag every real repo.
+    const candidate = PLATFORM_HOSTS.some((h) => host === h || host.endsWith('.' + h))
+      ? (u.pathname.split('/').filter(Boolean)[0] || '').toLowerCase()
+      : host.split('.')[0];
+    const cand = candidate.replace(/[^a-z0-9]/g, '');
+    if (!cand) return true;
     const toks = [normToken(symbol), normToken(name)].filter((t) => t && t.length >= 3);
-    return toks.some((t) => host.includes(t) || t.includes(host));
+    return toks.some((t) => cand.includes(t) || t.includes(cand));
   } catch (e) { return true; }
 };
 
@@ -603,9 +613,8 @@ const tick = async () => {
               console.log(`[watcher] skipped fresh ${x.card.symbol}: website unreachable`);
               continue;
             }
-            let host = x.card.website;
-            try { host = new URL(x.card.website).hostname.replace(/^www\./, ''); } catch (e) { /* raw */ }
-            flags.push(`web: ${host} — ${peek.ok ? peek.line : '⚠️ unreachable'}`);
+            flags.push(`🔗 ${x.card.website}`);
+            flags.push(peek.ok ? `«${peek.line}»` : '⚠️ website unreachable');
             if (peek.ok && !domainMatchesToken(x.card.website, x.card.symbol, x.card.name)) {
               flags.push('⚠️ domain unrelated to token name (borrowed link?)');
             }
