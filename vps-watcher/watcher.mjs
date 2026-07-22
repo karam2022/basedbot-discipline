@@ -96,6 +96,12 @@ const pollUpdates = async () => {
     off.offset = u.update_id + 1;
     const txt = (u.message && u.message.text || '').trim().toLowerCase();
     if (u.message && u.message.chat && txt.startsWith('/')) {
+      const fromChat = String(u.message.chat.id);
+      // Commands only from bound chats — anyone can message a bot, and the
+      // watchlist must not be writable by strangers. (/firehose is exempt:
+      // binding a new chat is the one command that must work from anywhere.)
+      const bound = fromChat === String(tgChatId) || fromChat === String(tgFirehoseChatId);
+      if (!bound && txt.split(/\s+/)[0].split('@')[0] !== '/firehose') continue;
       const reply = (text) => tg('sendMessage', { chat_id: u.message.chat.id, text });
       const [cmdRaw, ...args] = txt.split(/\s+/);
       const cmd = cmdRaw.split('@')[0];
