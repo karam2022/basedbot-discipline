@@ -123,7 +123,7 @@ const renderOverrides = async () => {
 const init = async () => {
   const settings = await loadSettings();
 
-  for (const id of ['filterEnabled', 'cardIntelEnabled', 'hotEnabled', 'laptopHotAlerts', 'creatorGuardEnabled', 'reminderEnabled', 'stopLossEnabled', 'journalEnabled', 'fomoGuardEnabled', 'notifyEnabled']) {
+  for (const id of ['filterEnabled', 'cardIntelEnabled', 'hotEnabled', 'auditGuardEnabled', 'laptopHotAlerts', 'creatorGuardEnabled', 'reminderEnabled', 'stopLossEnabled', 'journalEnabled', 'fomoGuardEnabled', 'notifyEnabled']) {
     $(id).checked = Boolean(settings[id]);
     $(id).addEventListener('change', () => saveSettings({ [id]: $(id).checked }));
   }

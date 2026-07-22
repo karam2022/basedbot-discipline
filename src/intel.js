@@ -83,7 +83,7 @@ BBD.intel = (() => {
     return ` · 👤 dev: ${launches}${rugs}${rep.flagged ? ' ⚠️' : ''}`;
   };
 
-  const renderVerdict = (checks, rep) => {
+  const renderVerdict = (checks, rep, danger) => {
     let el = document.getElementById('bbd-intel');
     if (!el || !el.isConnected) {
       el = document.createElement('div');
@@ -92,15 +92,18 @@ BBD.intel = (() => {
     }
     const passed = checks.filter(([, v]) => v === true);
     const failed = checks.filter(([, v]) => v === false);
-    // A flagged creator forces the chip red even if the token's own snapshot
-    // looks clean — the whole point of the guard.
-    const cls = rep && rep.flagged ? 'bbd-bad'
+    // A flagged creator or a drainable contract forces the chip red even if the
+    // token's own snapshot looks clean — the whole point of the guards.
+    const cls = (danger && danger.danger) || (rep && rep.flagged) ? 'bbd-bad'
       : failed.length === 0 ? 'bbd-good' : failed.length <= 2 ? 'bbd-warn' : 'bbd-bad';
     el.className = cls;
     const failText = failed.length
       ? ' · ⚠️ ' + failed.map(([n]) => n).join(', ')
       : ' · clean';
-    el.textContent = `🛡 ${passed.length}/${checks.length - checks.filter(([, v]) => v === null).length} checks${failText}${devNote(rep)}`;
+    const dangerNote = danger && danger.danger
+      ? ` · ⛔ ${danger.reasons[0] || 'contract can drain liquidity'}`
+      : '';
+    el.textContent = `🛡 ${passed.length}/${checks.length - checks.filter(([, v]) => v === null).length} checks${failText}${devNote(rep)}${dangerNote}`;
     el.style.display = 'block';
   };
 
@@ -122,7 +125,8 @@ BBD.intel = (() => {
         BBD.creator.observe(addr, BBD.feed.creatorFor(addr), BBD.feed.marketFor(addr));
         rep = BBD.creator.verdictFor(addr, settings);
       }
-      renderVerdict(runChecks(metrics, settings), rep);
+      const danger = addr && settings.auditGuardEnabled ? BBD.feed.auditFor(addr) : null;
+      renderVerdict(runChecks(metrics, settings), rep, danger);
       if (addr) await BBD.store.mergeEntry(BBD.KEYS.intel, addr, metrics);
     } catch (err) {
       console.warn('[bbd] intel scan failed', err);

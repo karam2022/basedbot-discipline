@@ -122,6 +122,27 @@ a[href*="/token/"]:hover .bbd-override,
 .bbd-cardintel.bbd-ci-warn { background: #292112; color: #fcd34d; border: 1px solid #f59e0b; }
 .bbd-cardintel.bbd-ci-bad { background: #2d1212; color: #fca5a5; border: 1px solid #ef4444; }
 
+/* Dangerous contract/hook (owner can drain liquidity): hard red tint + ⛔.
+   The strongest on-card warning — this is funds-at-risk, not just noise. */
+.bbd-danger {
+  outline: 2px solid #ef4444 !important;
+  outline-offset: -2px;
+  border-radius: 8px;
+}
+.bbd-danger::after {
+  content: '⛔ risky contract';
+  position: absolute;
+  bottom: 4px;
+  left: 4px;
+  z-index: 9;
+  background: rgba(153, 27, 27, 0.95);
+  color: #fff1f2;
+  font: 700 9px/1.5 system-ui, sans-serif;
+  padding: 0 5px;
+  border-radius: 4px;
+  letter-spacing: 0.02em;
+}
+
 /* Repeat-offender creator: amber warning tint + ⚠️ marker. Stays visible
    (unlike hidden memes) so a known-bad dev is obvious rather than silently gone. */
 .bbd-baddev {

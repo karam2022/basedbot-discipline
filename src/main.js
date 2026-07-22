@@ -13,10 +13,10 @@
     observer.disconnect();
     ['bbd-filter-chip', 'bbd-banner', 'bbd-refresh', 'bbd-intel', 'bbd-fomo', 'bbd-guard-revenge']
       .forEach((id) => document.getElementById(id)?.remove());
-    document.querySelectorAll('.bbd-hidden, .bbd-gem, .bbd-hot, .bbd-baddev, .bbd-override, .bbd-cardintel')
+    document.querySelectorAll('.bbd-hidden, .bbd-gem, .bbd-hot, .bbd-baddev, .bbd-danger, .bbd-override, .bbd-cardintel')
       .forEach((el) => {
         if (el.classList.contains('bbd-override') || el.classList.contains('bbd-cardintel')) el.remove();
-        else el.classList.remove('bbd-hidden', 'bbd-gem', 'bbd-hot', 'bbd-baddev');
+        else el.classList.remove('bbd-hidden', 'bbd-gem', 'bbd-hot', 'bbd-baddev', 'bbd-danger');
       });
   };
   const guard = (fn) => () => {

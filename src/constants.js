@@ -52,6 +52,9 @@ BBD.DEFAULT_SETTINGS = Object.freeze({
   creatorMaxRugs: 2,           // >= this many observed rugs => flagged
   creatorRugMinPeakUsd: 8000,  // a token must have had a real market to count as a rug
   creatorRugDeadLiqUsd: 800,   // ...and its liquidity must have since collapsed below this
+  // Contract/hook audit guard: flag tokens whose contract or Uniswap-v4 hook can
+  // drain liquidity, trap LPs or levy hidden fees (from /api/audit/batch).
+  auditGuardEnabled: true,
   // Launchpad badges (img alt values on Pulse cards) treated as meme sources.
   // NOTE: memeBadges/memeKeywords + the hot* gates + score.js SOCIAL_WEIGHTS are
   // mirrored in shared/hot-config.json (the VPS watcher reads that file). Keep
@@ -85,6 +88,10 @@ BBD.KEYS = Object.freeze({
 // Applied in filter.classify (not scoreCard) since it needs the addr → creator
 // lookup; matches the launchpad-badge penalty in weight.
 BBD.BAD_CREATOR_PENALTY = -3;
+
+// Score penalty for a token the audit flags as drainable/unsafe — heavier than
+// a meme badge: this is funds-at-risk, not just noise.
+BBD.AUDIT_DANGER_PENALTY = -5;
 
 BBD.STALE_MS = 30 * 60 * 1000;   // position data older than this is labeled stale
 BBD.SCAN_DEBOUNCE_MS = 300;

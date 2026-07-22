@@ -12,6 +12,8 @@ BBD.feed = (() => {
   const titles = new Map();  // addr -> { list: ['Website', ...], ts }
   const creator = new Map(); // addr -> creatorAddress (for the creator guard)
   const market = new Map();  // addr -> { liq, mcap, isLaunchpad, symbol, ts }
+  const audit = new Map();   // addr -> { danger, critical, ownerRenounced, reasons, ts }
+  let prices = {};           // { ETH: number, SOL: number, ... }
 
   // metadata/batch keys carry a chain suffix ("0x…-4663"); metrics keys don't.
   // Mirror tokenAddrFromHref (#5): lowercase hex EVM addresses for stable keys,
@@ -131,6 +133,53 @@ BBD.feed = (() => {
     prune(titles);
   };
 
+  const takePrices = (data) => {
+    const next = {};
+    for (const [sym, v] of Object.entries(data)) {
+      const n = Number(v);
+      if (Number.isFinite(n) && n >= 0) next[sym] = n;
+    }
+    if (Object.keys(next).length) prices = next;
+  };
+
+  // Reduce one token's audit block to a safety verdict. "danger" means funds
+  // are at real risk: the token contract is flagged unsafe, or its hook carries
+  // a critical vulnerability (owner can drain liquidity / trap LPs / levy hidden
+  // fees) — signals no holder stat exposes.
+  const CRIT = new Set(['critical']);
+  const evalAudit = (a) => {
+    if (!a || typeof a !== 'object') return null;
+    const vulns = a.hookAudit && Array.isArray(a.hookAudit.vulnerabilities)
+      ? a.hookAudit.vulnerabilities : [];
+    const criticals = vulns.filter((v) => v && CRIT.has(v.impact));
+    const hookUnsafe = a.hookAudit ? a.hookAudit.isSafe === false : false;
+    const tokenUnsafe = a.isTokenSafe === false;
+    const danger = tokenUnsafe || (hookUnsafe && criticals.length > 0);
+    const reasons = [];
+    if (tokenUnsafe) reasons.push('token contract flagged unsafe');
+    for (const v of criticals.slice(0, 2)) {
+      reasons.push(typeof v.description === 'string' && v.description
+        ? v.description.replace(/\s+/g, ' ').slice(0, 90)
+        : (v.type || 'critical hook risk'));
+    }
+    return {
+      danger,
+      critical: criticals.length > 0,
+      ownerRenounced: a.ownerRenounced === true,
+      reasons,
+      ts: Date.now()
+    };
+  };
+  const takeAudit = (objs) => {
+    if (!Array.isArray(objs)) return;
+    for (const o of objs) {
+      if (!o || o.done || !isAddr(o.address) || !o.data) continue;
+      const v = evalAudit(o.data.audit);
+      if (v) audit.set(normAddr(o.address), v);
+    }
+    prune(audit);
+  };
+
   window.addEventListener('message', (ev) => {
     if (ev.source !== window || ev.origin !== location.origin) return;
     const msg = ev.data;
@@ -138,6 +187,8 @@ BBD.feed = (() => {
     if (msg.kind === 'metrics') takeMetrics(msg.data);
     else if (msg.kind === 'metadata') takeMetadata(msg.data);
     else if (msg.kind === 'list') takeList(msg.data);
+    else if (msg.kind === 'prices') takePrices(msg.data);
+    else if (msg.kind === 'audit') takeAudit(msg.data);
   });
   // The load-time batches fired before this listener existed.
   window.postMessage({ __bbd: 'replay-request' }, location.origin);
@@ -153,6 +204,9 @@ BBD.feed = (() => {
   // are reference facts, and the guard's own history is what carries meaning.
   const creatorFor = (addr) => (addr && creator.get(addr)) || null;
   const marketFor = (addr) => (addr && market.get(addr)) || null;
+  const auditFor = (addr) => (addr && audit.get(addr)) || null;
+  const priceOf = (sym) => (sym && prices[sym]) || null;
+  const ethPrice = () => prices.ETH || null;
 
-  return { statsFor, titlesFor, creatorFor, marketFor };
+  return { statsFor, titlesFor, creatorFor, marketFor, auditFor, priceOf, ethPrice };
 })();
