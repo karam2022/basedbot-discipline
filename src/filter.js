@@ -8,6 +8,8 @@ BBD.filter = (() => {
   let gemCount = 0;
   let hotCount = 0;
   let peeking = false;
+  let filterOn = true; // reflects settings.filterEnabled for the chip label
+  let hiOn = true;     // reflects settings.hotEnabled for the chip label
   const hotSeen = new Set(); // addrs already notified this session
 
   const isPulse = () => location.pathname.startsWith('/pulse');
@@ -175,9 +177,12 @@ BBD.filter = (() => {
     const chip = ensureChip();
     const gems = gemCount > 0 ? ` · ${gemCount} 💎` : '';
     const hots = hotCount > 0 ? ` · ${hotCount} 🔥` : '';
-    setText(chip, peeking
-      ? `👁 peeking · ${hiddenCount} memecoins — hide again${gems}${hots}`
-      : `🚫 ${hiddenCount} memecoins hidden${gems}${hots}`);
+    const hidePart = filterOn
+      ? (peeking
+        ? `👁 peeking · ${hiddenCount} memecoins — hide again`
+        : `🚫 ${hiddenCount} memecoins hidden`)
+      : '💡 highlights on'; // hiding disabled — chip still surfaces gems/🔥
+    setText(chip, `${hidePart}${gems}${hots}`);
     const display =
       isPulse() && (hiddenCount > 0 || gemCount > 0 || hotCount > 0) ? 'block' : 'none';
     if (chip.style.display !== display) chip.style.display = display;
@@ -217,7 +222,11 @@ BBD.filter = (() => {
       return;
     }
     const settings = await BBD.store.settings();
-    if (!settings.filterEnabled) {
+    filterOn = settings.filterEnabled;
+    hiOn = settings.hotEnabled;
+    // Hiding and highlighting are independent (v1.8.2): only bail when BOTH are
+    // off, so turning off "Hide meme coins" no longer kills 🔥/💎 highlights.
+    if (!filterOn && !hiOn) {
       teardown();
       return;
     }
@@ -241,12 +250,18 @@ BBD.filter = (() => {
       // parser is the fallback for cards no batch has covered yet.
       const stats = BBD.feed.statsFor(info.addr) || parseCardStats(card);
       const state = classify(stats, info, settings, overrides, positions, intel);
-      card.classList.toggle('bbd-hidden', state === 'hide');
-      card.classList.toggle('bbd-gem', state === 'gem');
-      card.classList.toggle('bbd-hot', state === 'hot');
-      if (state === 'hide') hidden += 1;
-      if (state === 'gem') gems += 1;
-      if (state === 'hot') {
+      // Each gate independent: hiding follows filterEnabled, highlights follow
+      // hotEnabled. A token can be highlighted while hiding is off, and hidden
+      // while highlights are off.
+      const doHide = filterOn && state === 'hide';
+      const doGem = hiOn && state === 'gem';
+      const doHot = hiOn && state === 'hot';
+      card.classList.toggle('bbd-hidden', doHide);
+      card.classList.toggle('bbd-gem', doGem);
+      card.classList.toggle('bbd-hot', doHot);
+      if (doHide) hidden += 1;
+      if (doGem) gems += 1;
+      if (doHot) {
         hots += 1;
         notifyHot(info, settings, stats);
       }
