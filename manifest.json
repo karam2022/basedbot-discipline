@@ -43,6 +43,7 @@
         "src/pnl.js",
         "src/banner.js",
         "src/guard.js",
+        "src/dump.js",
         "src/main.js"
       ],
       "css": ["styles.css"],

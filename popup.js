@@ -123,16 +123,16 @@ const renderOverrides = async () => {
 const init = async () => {
   const settings = await loadSettings();
 
-  for (const id of ['filterEnabled', 'cardIntelEnabled', 'hotEnabled', 'auditGuardEnabled', 'laptopHotAlerts', 'creatorGuardEnabled', 'reminderEnabled', 'stopLossEnabled', 'journalEnabled', 'fomoGuardEnabled', 'notifyEnabled']) {
+  for (const id of ['filterEnabled', 'cardIntelEnabled', 'hotEnabled', 'auditGuardEnabled', 'laptopHotAlerts', 'creatorGuardEnabled', 'reminderEnabled', 'stopLossEnabled', 'journalEnabled', 'fomoGuardEnabled', 'dumpAlertsEnabled', 'notifyEnabled']) {
     $(id).checked = Boolean(settings[id]);
     $(id).addEventListener('change', () => saveSettings({ [id]: $(id).checked }));
   }
-  for (const id of ['thresholdPct', 'snoozeMin', 'stopLossPct', 'minScore', 'gemMinScore', 'creatorMaxLaunches', 'creatorMaxRugs', 'dailyLossLimit']) {
+  for (const id of ['thresholdPct', 'snoozeMin', 'stopLossPct', 'minScore', 'gemMinScore', 'creatorMaxLaunches', 'creatorMaxRugs', 'dailyLossLimit', 'whaleSellUsd']) {
     $(id).value = settings[id];
     $(id).addEventListener('change', () => {
       const value = Number($(id).value);
       // These floor at 1; the rest may go to/through zero (or negative, minScore).
-      const mustBePositive = ['thresholdPct', 'snoozeMin', 'stopLossPct', 'creatorMaxLaunches', 'creatorMaxRugs', 'dailyLossLimit'].includes(id);
+      const mustBePositive = ['thresholdPct', 'snoozeMin', 'stopLossPct', 'creatorMaxLaunches', 'creatorMaxRugs', 'dailyLossLimit', 'whaleSellUsd'].includes(id);
       // gemMinScore floor: 0 would mark every visible token a gem (#7).
       if (id === 'gemMinScore' && value < 1) return;
       if (Number.isFinite(value) && (!mustBePositive || value > 0)) {

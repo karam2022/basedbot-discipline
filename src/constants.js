@@ -23,6 +23,11 @@ BBD.DEFAULT_SETTINGS = Object.freeze({
   fomoGuardEnabled: true,
   dailyLossLimit: 3,
   revengeWindowMin: 60,
+  // Dump alerts: watch the trade feed of held positions and ping when the dev
+  // sells, or a single sell exceeds whaleSellUsd. Only recent trades count.
+  dumpAlertsEnabled: true,
+  whaleSellUsd: 300,
+  dumpWindowMin: 3,
   // Utility-score thresholds: hide below minScore, flag gems at gemMinScore.
   minScore: 2,
   gemMinScore: 4,

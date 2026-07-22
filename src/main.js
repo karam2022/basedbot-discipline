@@ -106,6 +106,10 @@
   intervals.push(setInterval(guard(() => BBD.creator.flush()), 30 * 1000));
   window.addEventListener('pagehide', () => BBD.creator.flush());
 
+  // Watch held positions' trade feeds for dev/whale dumps (#8). Slower cadence
+  // than the DOM polls — these are real network calls, one per held token.
+  intervals.push(setInterval(guard(() => BBD.dump.tick()), 20 * 1000));
+
   lastPath = location.pathname;
   ensureRefreshBtn();
   runForRoute();

@@ -269,6 +269,11 @@
       <input type="checkbox" id="fomoGuardEnabled" class="switch" />
     </label>
     <label class="row">
+      <span class="row-text"><span class="row-label">Dump alerts</span>
+        <span class="row-hint">🚨 dev or whale sells a token you hold</span></span>
+      <input type="checkbox" id="dumpAlertsEnabled" class="switch" />
+    </label>
+    <label class="row">
       <span class="row-text"><span class="row-label">Trade journal</span></span>
       <input type="checkbox" id="journalEnabled" class="switch" />
     </label>
@@ -317,6 +322,9 @@
 
       <div class="sub-title">Anti-FOMO</div>
       <div class="field-row"><label>Stop-for-today after N losses</label><input type="number" id="dailyLossLimit" min="1" max="50" /></div>
+
+      <div class="sub-title">Dump alerts</div>
+      <div class="field-row"><label>Whale sell alert over $</label><input type="number" id="whaleSellUsd" min="1" max="1000000" /></div>
 
       <div class="sub-title">Utility score</div>
       <div class="field-row"><label>Hide below score</label><input type="number" id="minScore" min="-10" max="10" /></div>
