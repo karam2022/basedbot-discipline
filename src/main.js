@@ -54,12 +54,16 @@
   // Throttled rescans while the live feed mutates. The feed mutates
   // continuously (price ticks), so a debounce that resets per mutation would
   // never fire — instead guarantee one trailing scan per throttle window.
+  // scan() is async (storage reads): keep the flag up until it settles, or two
+  // scans run in parallel and toggle classes against each other (same ticking
+  // pattern as the VPS watcher).
   const observer = new MutationObserver(() => {
     if (scanQueued) return;
     scanQueued = true;
     setTimeout(guard(() => {
-      scanQueued = false;
-      BBD.filter.scan();
+      Promise.resolve(BBD.filter.scan()).finally(() => {
+        scanQueued = false;
+      });
     }), BBD.SCAN_DEBOUNCE_MS);
   });
   observer.observe(document.body, { childList: true, subtree: true });
