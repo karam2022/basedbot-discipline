@@ -10,6 +10,10 @@ BBD.DEFAULT_SETTINGS = Object.freeze({
   thresholdPct: 20,
   snoozeMin: 15,
   refireStepPct: 10,
+  // Stop-loss side of the discipline banner: nag on positions down past
+  // stopLossPct so losers get cut, not just winners taken.
+  stopLossEnabled: true,
+  stopLossPct: 25,
   // Utility-score thresholds: hide below minScore, flag gems at gemMinScore.
   minScore: 2,
   gemMinScore: 4,

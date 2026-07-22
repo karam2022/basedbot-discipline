@@ -5,17 +5,26 @@
 BBD.banner = (() => {
   const notified = new Set(); // addrs already sent a Chrome notification this session
 
-  const eligible = (positions, settings, snoozes, dismissed) => {
+  // kind 'win': pct at/above thresholdPct, re-fires after climbing another
+  // refireStepPct. kind 'loss': pct at/below -stopLossPct, re-fires after
+  // dropping another refireStepPct. Same snooze/dismiss maps — a position is
+  // only ever a winner or a loser at one moment, so the keys never collide.
+  const eligible = (positions, settings, snoozes, dismissed, kind) => {
     const now = Date.now();
+    const win = kind === 'win';
+    const meets = (pct) => (win ? pct >= settings.thresholdPct : pct <= -settings.stopLossPct);
+    const refired = (pct, dis) => (win
+      ? pct >= dis + settings.refireStepPct
+      : pct <= dis - settings.refireStepPct);
     return Object.entries(positions)
       .map(([addr, p]) => ({ addr, ...p }))
-      .filter((p) => typeof p.pct === 'number' && p.pct >= settings.thresholdPct)
+      .filter((p) => typeof p.pct === 'number' && meets(p.pct))
       .filter((p) => !(snoozes[p.addr] && snoozes[p.addr] > now))
       .filter((p) => {
         const dis = dismissed[p.addr];
-        return dis === undefined || p.pct >= dis + settings.refireStepPct;
+        return dis === undefined || refired(p.pct, dis);
       })
-      .sort((a, b) => b.pct - a.pct);
+      .sort((a, b) => (win ? b.pct - a.pct : a.pct - b.pct)); // most extreme first
   };
 
   const ensureEl = () => {
@@ -34,20 +43,23 @@ BBD.banner = (() => {
 
   const MAX_ROWS = 3;
 
-  // One row per profitable position (capped), each with its own snooze and
-  // dismiss — holding several winners must not hide all but the biggest.
-  const renderRow = (pos, settings) => {
+  // One row per eligible position (capped), each with its own snooze and
+  // dismiss — holding several winners/losers must not hide all but the biggest.
+  const renderRow = (pos, settings, kind) => {
+    const win = kind === 'win';
     const row = document.createElement('div');
-    row.className = 'bbd-banner-row';
+    row.className = win ? 'bbd-banner-row' : 'bbd-banner-row bbd-banner-row-loss';
 
     const stale = Date.now() - pos.ts > BBD.STALE_MS;
     const usd = pos.usd ? ` (${pos.usd})` : '';
+    const sym = BBD.sanitizeAlertText(pos.symbol, 20) || pos.addr.slice(0, 8);
     const msg = document.createElement(pos.chain ? 'a' : 'span');
     msg.className = 'bbd-banner-msg';
     if (pos.chain) msg.href = `/token/${pos.chain}/${pos.addr}`;
-    msg.textContent =
-      `🟢 ${BBD.sanitizeAlertText(pos.symbol, 20) || pos.addr.slice(0, 8)} +${pos.pct}%${usd}` +
-      `${stale ? ' · stale' : ''} — take profit.`;
+    // pos.pct is negative for losses, so it already carries its own minus sign.
+    msg.textContent = win
+      ? `🟢 ${sym} +${pos.pct}%${usd}${stale ? ' · stale' : ''} — take profit.`
+      : `🔴 ${sym} ${pos.pct}%${usd}${stale ? ' · stale' : ''} — cut losses?`;
 
     const snoozeBtn = document.createElement('button');
     snoozeBtn.type = 'button';
@@ -62,7 +74,9 @@ BBD.banner = (() => {
     const dismissBtn = document.createElement('button');
     dismissBtn.type = 'button';
     dismissBtn.textContent = 'Dismiss';
-    dismissBtn.title = `Re-fires if it climbs another ${settings.refireStepPct} points`;
+    dismissBtn.title = win
+      ? `Re-fires if it climbs another ${settings.refireStepPct} points`
+      : `Re-fires if it drops another ${settings.refireStepPct} points`;
     dismissBtn.addEventListener('click', async () => {
       await BBD.store.mergeEntry(BBD.KEYS.dismissed, pos.addr, pos.pct);
       BBD.banner.tick();
@@ -72,16 +86,26 @@ BBD.banner = (() => {
     return row;
   };
 
-  const render = (hits, settings) => {
-    const el = ensureEl();
-    el.innerHTML = '';
-    hits.slice(0, MAX_ROWS).forEach((pos) => el.append(renderRow(pos, settings)));
+  const appendSection = (el, hits, settings, kind) => {
+    hits.slice(0, MAX_ROWS).forEach((pos) => el.append(renderRow(pos, settings, kind)));
     if (hits.length > MAX_ROWS) {
       const more = document.createElement('div');
       more.className = 'bbd-banner-more';
-      more.textContent = `…and ${hits.length - MAX_ROWS} more in profit — open Portfolio.`;
+      more.textContent = kind === 'win'
+        ? `…and ${hits.length - MAX_ROWS} more in profit — open Portfolio.`
+        : `…and ${hits.length - MAX_ROWS} more underwater — open Portfolio.`;
       el.append(more);
     }
+  };
+
+  const render = (winners, losers, settings) => {
+    const el = ensureEl();
+    el.innerHTML = '';
+    appendSection(el, winners, settings, 'win');
+    appendSection(el, losers, settings, 'loss');
+    // Drop the celebratory green when the banner is only about losses.
+    el.classList.toggle('bbd-has-loss', losers.length > 0);
+    el.classList.toggle('bbd-loss-only', winners.length === 0 && losers.length > 0);
     el.style.display = 'flex';
   };
 
@@ -116,13 +140,18 @@ BBD.banner = (() => {
         BBD.store.get(BBD.KEYS.snoozes, {}),
         BBD.store.get(BBD.KEYS.dismissed, {})
       ]);
-      const hits = eligible(positions, settings, snoozes, dismissed);
-      if (hits.length === 0) {
+      const winners = eligible(positions, settings, snoozes, dismissed, 'win');
+      const losers = settings.stopLossEnabled
+        ? eligible(positions, settings, snoozes, dismissed, 'loss')
+        : [];
+      if (winners.length === 0 && losers.length === 0) {
         hide();
         return;
       }
-      render(hits, settings);
-      hits.forEach((hit) => maybeNotify(hit, settings));
+      render(winners, losers, settings);
+      // Chrome notifications stay on the take-profit path (its background
+      // dedupe is tuned for a rising pct); the loss nag lives in the banner.
+      winners.forEach((hit) => maybeNotify(hit, settings));
     } catch (err) {
       console.warn('[bbd] banner tick failed', err);
     }

@@ -210,6 +210,30 @@ a.bbd-banner-msg:hover {
   font: 500 12px/1.4 system-ui, sans-serif;
   color: #86efac;
 }
+/* Loss rows read red even inside the mixed (winners + losers) banner. */
+.bbd-banner-row-loss .bbd-banner-msg {
+  color: #fecaca;
+}
+/* Mixed banner: calm the pulsing green edge once a loss is present. */
+#bbd-banner.bbd-has-loss {
+  animation: none;
+  border-bottom-color: #f59e0b;
+}
+/* Loss-only banner: a red nag, not a green celebration. */
+#bbd-banner.bbd-loss-only {
+  background: linear-gradient(90deg, #2d1212, #4c1d1d, #2d1212);
+  border-bottom-color: #ef4444;
+  color: #fee2e2;
+}
+#bbd-banner.bbd-loss-only .bbd-banner-more {
+  color: #fca5a5;
+}
+#bbd-banner.bbd-loss-only button {
+  background: #b91c1c;
+}
+#bbd-banner.bbd-loss-only button:hover {
+  background: #991b1b;
+}
 @keyframes bbd-pulse {
   0%, 100% { border-bottom-color: #22c55e; }
   50% { border-bottom-color: #86efac; }
