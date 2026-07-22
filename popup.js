@@ -28,6 +28,28 @@ const DEFAULTS = {
   hotMinProRatio: 0.05,
   hotMaxProRatio: 0.6,
   hotMinUtilityScore: 2,
+  // Per-card safety readout + risk guards (feed).
+  cardIntelEnabled: true,
+  creatorGuardEnabled: true,
+  creatorMaxLaunches: 5,
+  creatorMaxRugs: 2,
+  auditGuardEnabled: true,
+  // Position discipline.
+  stopLossEnabled: true,
+  stopLossPct: 25,
+  peakGivebackEnabled: true,
+  peakGivebackPct: 15,
+  journalEnabled: true,
+  // Anti-FOMO guards.
+  fomoGuardEnabled: true,
+  dailyLossLimit: 3,
+  revengeWindowMin: 60,
+  revengeToastSec: 10,
+  // Dev / whale dump alerts.
+  dumpAlertsEnabled: true,
+  whaleSellUsd: 300,
+  whaleSellLiquidityPct: 2,
+  dumpWindowMin: 3,
   tgToken: '',
   tgChatId: '',
   memeBadges: ['Pons', 'bow.fun', 'Flap', 'Circus', 'Charms', 'Long.xyz', 'Bankr', 'Ape Store',
@@ -56,11 +78,25 @@ const HIDE_METRICS = (self.BBD && BBD.HIDE_METRICS) || [
 const TOGGLES = {
   feedToggles: [
     ['filterEnabled', 'Hide meme coins on Pulse'],
-    ['hotEnabled', '🔥 / 💎 highlights on Pulse']
+    ['hotEnabled', '🔥 / 💎 highlights on Pulse'],
+    ['cardIntelEnabled', '🛡 Per-card safety readout', 'Shows a N/7 safety pill on every Pulse card'],
+    ['creatorGuardEnabled', '⚠️ Flag risky creators', 'Marks tokens from serial launchers / past ruggers'],
+    ['auditGuardEnabled', '⛔ Flag risky contracts', 'Marks tokens whose contract/hook can drain liquidity']
   ],
   tpToggles: [
     ['reminderEnabled', 'Take-profit reminders'],
+    ['stopLossEnabled', 'Stop-loss nag', 'Nag when a position falls past your stop-loss'],
+    ['peakGivebackEnabled', 'Peak-giveback nag', 'Nag when a winner hands back points from its peak'],
     ['notifyEnabled', 'Chrome notifications', 'Desktop ping when a held position crosses the threshold']
+  ],
+  journalToggles: [
+    ['journalEnabled', 'Keep a trade journal', 'Local-only lifecycle log — win rate, profit given back']
+  ],
+  fomoToggles: [
+    ['fomoGuardEnabled', 'Anti-FOMO guards', 'Daily loss limit + revenge-trade warning']
+  ],
+  dumpToggles: [
+    ['dumpAlertsEnabled', 'Dev / whale dump alerts', 'Watch held tokens for creator or whale sells']
   ],
   tgToggles: [
     ['laptopHotAlerts', '🔥 Telegram alerts from this laptop', 'Turn off if a VPS watcher covers discovery']
@@ -87,7 +123,23 @@ const NUMBERS = {
   tpFields: [
     ['thresholdPct', 'Remind when up', 1, 1000, '%'],
     ['snoozeMin', 'Snooze length', 1, 240, 'min'],
-    ['refireStepPct', 'Re-nag after climb of', 1, 500, 'pts']
+    ['refireStepPct', 'Re-nag after climb of', 1, 500, 'pts'],
+    ['stopLossPct', 'Stop-loss at down', 1, 100, '%'],
+    ['peakGivebackPct', 'Peak-giveback after', 1, 500, 'pts']
+  ],
+  creatorFields: [
+    ['creatorMaxLaunches', 'Flag creator after N launches', 1, 100, ''],
+    ['creatorMaxRugs', '…or after N rugs', 1, 50, '']
+  ],
+  fomoFields: [
+    ['dailyLossLimit', 'Stop-for-today after N losses', 1, 50, ''],
+    ['revengeWindowMin', 'Revenge window', 1, 1440, 'min'],
+    ['revengeToastSec', 'Revenge toast duration', 3, 60, 'sec']
+  ],
+  dumpFields: [
+    ['whaleSellUsd', 'Whale sell alert over $', 1, 1000000, ''],
+    ['whaleSellLiquidityPct', '…or % of liquidity', 0, 100, '%'],
+    ['dumpWindowMin', 'Only sells within', 1, 60, 'min']
   ]
 };
 
@@ -233,6 +285,64 @@ const renderOverrides = async () => {
   }
 };
 
+// Standalone journal summary (popup is dependency-free; mirror of
+// BBD.journal.summarize). Only trades with a fresh, numeric exit count toward
+// win rate / averages — stale-exit closes are surfaced separately, not trusted.
+const summarizeJournal = (journal) => {
+  const all = Object.values(journal || {});
+  const closed = all.filter((e) => e.status === 'closed' && typeof e.exitPct === 'number');
+  const n = closed.length;
+  const wins = closed.filter((e) => e.exitPct > 0).length;
+  const gb = closed.filter((e) => typeof e.peakPct === 'number' && e.peakPct > 0)
+    .map((e) => e.peakPct - e.exitPct);
+  const mean = (a) => (a.length ? a.reduce((s, v) => s + v, 0) / a.length : 0);
+  return {
+    openCount: all.filter((e) => e.status === 'open').length,
+    closedCount: n,
+    winRate: n ? Math.round((100 * wins) / n) : 0,
+    avgExitPct: Math.round(mean(closed.map((e) => e.exitPct))),
+    avgGiveBackPct: Math.round(mean(gb)),
+    unknownExitCount: all.filter((e) => e.status === 'closed' && typeof e.exitPct !== 'number').length
+  };
+};
+
+const renderJournal = async () => {
+  const { journal = {} } = await chrome.storage.local.get('journal');
+  const s = summarizeJournal(journal);
+  const wrap = $('journalSummary');
+  wrap.innerHTML = '';
+  const line = (label, value, strong) => {
+    const row = el('div', 'row numrow');
+    row.append(el('span', 'label', label), el('span', strong ? 'field strong' : 'field', value));
+    wrap.appendChild(row);
+  };
+  if (!s.closedCount && !s.openCount) { wrap.append(el('div', 'hint', 'No trades logged yet.')); return; }
+  line('Closed trades', `${s.closedCount}${s.openCount ? ` (+${s.openCount} open)` : ''}`);
+  line('Win rate', `${s.winRate}%`);
+  line('Avg tracked exit', `${s.avgExitPct >= 0 ? '+' : ''}${s.avgExitPct}%`);
+  // The flagship discipline metric: profit ridden past the exit.
+  line('Avg profit given back', `${s.avgGiveBackPct}%`, true);
+  if (s.unknownExitCount) line('Closed without fresh exit', String(s.unknownExitCount));
+};
+
+const renderHealth = async () => {
+  const { positions = {}, positionsMeta = {} } = await chrome.storage.local.get(['positions', 'positionsMeta']);
+  const wrap = $('health');
+  wrap.innerHTML = '';
+  const line = (label, value) => {
+    const row = el('div', 'row numrow');
+    row.append(el('span', 'label', label), el('span', 'field', value));
+    wrap.appendChild(row);
+  };
+  const ageMs = typeof positionsMeta.sourceTs === 'number' ? Date.now() - positionsMeta.sourceTs : null;
+  const age = ageMs === null ? 'waiting…' : ageMs < 5000 ? 'just now'
+    : ageMs < 60000 ? `${Math.round(ageMs / 1000)}s ago` : `${Math.round(ageMs / 60000)}m ago`;
+  line('Positions tracked', String(Object.keys(positions).length));
+  line('Source', positionsMeta.source === 'balances-api' ? 'BasedBot balances API'
+    : positionsMeta.source === 'dom-fallback' ? 'Visible page fallback' : 'Not connected yet');
+  line('Last update', age);
+};
+
 const init = async () => {
   const settings = await loadSettings();
   try { $('plate').textContent = 'v' + chrome.runtime.getManifest().version; } catch (e) { /* */ }
@@ -268,6 +378,25 @@ const init = async () => {
   renderHideRules(settings);
   renderBadges(settings);
   renderOverrides();
+  renderJournal();
+  renderHealth();
+
+  $('exportJournal').addEventListener('click', async () => {
+    const { journal = {} } = await chrome.storage.local.get('journal');
+    const blob = new Blob([JSON.stringify({ exportedAt: new Date().toISOString(), journal }, null, 2)],
+      { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = el('a');
+    a.href = url;
+    a.download = `basedbot-journal-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  });
+  $('clearJournal').addEventListener('click', async () => {
+    if (!confirm('Delete the local trade journal? Export it first if you may need it.')) return;
+    await chrome.storage.local.set({ journal: {} });
+    renderJournal();
+  });
 };
 
 init().catch((err) => {
