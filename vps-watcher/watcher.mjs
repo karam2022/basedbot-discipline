@@ -70,9 +70,13 @@ const tg = async (method, payload) => {
   }
 };
 
-const sendTelegram = async (text, buttons) => {
-  if (!TG_TOKEN || !tgChatId) return false;
-  const payload = { chat_id: tgChatId, text, disable_web_page_preview: true };
+let tgFirehoseChatId = config.tgFirehoseChatId || '';
+// dest: 'quality' (default, your main chat) or 'firehose' (high-volume tiers).
+// Without a firehose chat configured, everything goes to the main chat.
+const sendTelegram = async (text, buttons, dest = 'quality') => {
+  const chat = dest === 'firehose' && tgFirehoseChatId ? tgFirehoseChatId : tgChatId;
+  if (!TG_TOKEN || !chat) return false;
+  const payload = { chat_id: chat, text, disable_web_page_preview: true };
   if (buttons) payload.reply_markup = { inline_keyboard: buttons };
   const j = await tg('sendMessage', payload);
   return Boolean(j && j.ok);
@@ -89,6 +93,14 @@ const pollUpdates = async () => {
   if (!j || !j.ok || !Array.isArray(j.result) || !j.result.length) return;
   for (const u of j.result) {
     off.offset = u.update_id + 1;
+    const txt = (u.message && u.message.text || '').trim().toLowerCase();
+    if (u.message && u.message.chat && txt === '/firehose') {
+      tgFirehoseChatId = String(u.message.chat.id);
+      saveJson(CONFIG_PATH, { ...config, tgChatId, tgFirehoseChatId });
+      await tg('sendMessage', { chat_id: tgFirehoseChatId, text: '🌊 This chat is now the FIREHOSE — high-volume tiers (💎 basic, 🚀 momentum, 🌱 basic) land here. Your main chat keeps only 🔥, strict 🌱👑, strong 💎, and exit warnings.' });
+      console.log(`[watcher] firehose chat bound: ${tgFirehoseChatId}`);
+      continue;
+    }
     if (u.message && u.message.chat && !tgChatId) {
       tgChatId = String(u.message.chat.id);
       saveJson(CONFIG_PATH, { ...config, tgChatId });
@@ -167,7 +179,8 @@ const scanPage = () => {
     const symbol = alts.find((a) => !NOT_SYMBOL.includes(a)) || '';
     const symIdx = leaves.indexOf(symbol);
     let name = symIdx >= 0 ? (leaves[symIdx + 1] || '') : '';
-    if (name.startsWith('/') || name === symbol) name = '';
+    if (name === 'OG') name = leaves[symIdx + 2] || ''; // OG badge sits between symbol and name
+    if (name.startsWith('/') || name === symbol || NOT_SYMBOL.includes(name)) name = '';
     const after = (label) => {
       const i = leaves.indexOf(label);
       return i >= 0 ? (leaves[i + 1] || '') : '';
@@ -330,6 +343,9 @@ const domainMatchesToken = (url, symbol, name) => {
   } catch (e) { return true; }
 };
 
+// Words a real product's self-description uses; a bare meme lander doesn't.
+const UTILITY_WORDS = /\b(protocol|infrastructure|platform|network|api|sdk|docs|documentation|whitepaper|lending|borrow|trading|exchange|payments?|compute|oracle|bridge|wallet|agent|analytics|data|index|treasury|rwa|defi|staking|yield|liquidity|governance|marketplace|identity|storage)\b/i;
+
 const TIERS = {
   hot: { head: '🔥 Best guess', body: 'passes every safety metric with real utility signals.' },
   gem: { head: '💎 Possible gem', body: 'passes every safety metric, has a website, thinner proof — DYOR.' },
@@ -337,7 +353,7 @@ const TIERS = {
   fresh: { head: '🌱 New utility launch', body: 'brand-new, real web presence, not a name-replica. Stats may be raw — size accordingly.' }
 };
 
-const alertToken = async (chain, card, tier, extra = '') => {
+const alertToken = async (chain, card, tier, extra = '', dest = 'quality') => {
   const url = `https://basedbot.app/token/${chain}/${card.addr}`;
   const sym = sanitizeAlertText(card.symbol, 20);
   const nm = sanitizeAlertText(card.name, 40);
@@ -354,7 +370,7 @@ const alertToken = async (chain, card, tier, extra = '') => {
   ]];
   const webLine = card.webLine ? `\n${card.webLine}` : '';
   const ok = await sendTelegram(
-    `${t.head} on Pulse (${chain})${extra}\n${label}\n${body}${webLine}\n${market}\n${stats}\n${url}`, buttons);
+    `${t.head} on Pulse (${chain})${extra}\n${label}\n${body}${webLine}\n${market}\n${stats}\n${url}`, buttons, dest);
   if (ok) console.log(`[watcher] alerted ${tier} ${card.symbol} on ${chain}`);
   return ok;
 };
@@ -570,15 +586,16 @@ const tick = async () => {
         const meta = await fetchMetadata(chain, [...new Set(pending.map((x) => x.card.addr))]);
         for (const x of pending) {
           const m = meta[x.card.addr.toLowerCase()] || {};
-          if (!x.card.symbol && m.symbol) x.card.symbol = String(m.symbol);
-          if (!x.card.name && m.name) x.card.name = String(m.name);
+          if (m.symbol && (!x.card.symbol || x.card.symbol === 'OG')) x.card.symbol = String(m.symbol);
+          if (m.name && (!x.card.name || x.card.name === 'OG')) x.card.name = String(m.name);
           x.card.website = m.website_url || null;
         }
         for (const x of pending) {
           const key = `${x.tier}:${x.card.addr}`;
           const flags = [];
+          let peek = null;
           if (x.card.website) {
-            const peek = await sitePeek(x.card.website);
+            peek = await sitePeek(x.card.website);
             if (!peek.ok && x.tier === 'fresh') {
               // dead website = fake presence: no 🌱, and never re-check
               seen[key] = { ts: Date.now(), skipped: 'dead-site' };
@@ -604,7 +621,20 @@ const tick = async () => {
             flags.push(`⚠️ volume ${Math.round(volN / mcN)}x mcap — possible wash trading`);
           }
           x.card.webLine = flags.join('\n');
-          await alertToken(chain, x.card, x.tier, x.upgraded ? ' — upgraded from 💎' : '');
+
+          // Channel routing. QUALITY: 🔥 always; 🌱 only when STRICT (the
+          // site's self-description reads like a product AND the token shows
+          // life); 💎 only with strong utility evidence. Everything else —
+          // 🚀 momentum, basic 💎, basic 🌱 — is firehose.
+          const txN = Number((x.card.tx || '').replace(/[^0-9]/g, '')) || 0;
+          const freshStrict = x.tier === 'fresh' && peek && peek.ok &&
+            UTILITY_WORDS.test(peek.line) && txN >= 25;
+          let dest = 'firehose';
+          if (x.tier === 'hot') dest = 'quality';
+          else if (freshStrict) dest = 'quality';
+          else if (x.tier === 'gem' && socialScore(x.card) >= 4) dest = 'quality';
+          const crown = freshStrict ? ' 👑' : '';
+          await alertToken(chain, x.card, x.tier, (x.upgraded ? ' — upgraded from 💎' : '') + crown, dest);
           seen[key] = { ts: Date.now() };
           saveJson(SEEN_PATH, seen); // persist per-send: crash must not re-alert
         }
