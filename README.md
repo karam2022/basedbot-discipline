@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/media/hero.png" alt="BasedBot Discipline — hides the trenches, flags the gems, nags you to take profit" width="100%" />
+</p>
+
 # BasedBot Discipline
 
 A Chrome extension for [basedbot.app](https://basedbot.app) that does the two
@@ -15,6 +19,24 @@ Telegram messages you configure yourself.
 
 Works on every chain basedbot's Pulse supports (Robinhood, Base, Ethereum,
 Solana, and more).
+
+---
+
+## What it looks like
+
+**The feed, filtered.** 70 meme launches hidden, four 💎 candidates ringed in
+gold, the count on the chip. This is a real Pulse feed, classified live:
+
+<p align="center">
+  <img src="docs/media/feed.png" alt="Pulse feed with meme coins hidden and gem candidates highlighted" width="100%" />
+</p>
+
+**Every parameter, yours.** The popup exposes the full control surface: hide
+rules, 🔥 gates, tax limit, take-profit thresholds, Telegram:
+
+<p align="center">
+  <img src="docs/media/popup.png" alt="Settings popup — every threshold editable" width="420" />
+</p>
 
 ---
 
