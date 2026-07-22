@@ -1,9 +1,11 @@
-// Popup settings UI. Reads/writes chrome.storage.local; content scripts react
-// via storage.onChanged.
+// Popup settings UI (OpenGov 2.0 monochrome). Schema-driven so every tunable
+// parameter is editable; content scripts react via chrome.storage.onChanged.
 'use strict';
 
 const DEFAULTS = {
   filterEnabled: true,
+  hotEnabled: true,
+  laptopHotAlerts: true,
   reminderEnabled: true,
   notifyEnabled: false,
   thresholdPct: 20,
@@ -17,18 +19,23 @@ const DEFAULTS = {
   hide_snipers_on: false, hide_snipers_max: 30,
   hide_dev_on: false, hide_dev_max: 10,
   maxTaxPct: 10,
-  hotEnabled: true,
-  laptopHotAlerts: true,
+  hotMaxTop10: 30,
+  hotMaxDev: 2,
+  hotMaxSnipers: 15,
+  hotMaxBundlers: 15,
+  hotMaxInsiders: 20,
+  hotMinHolders: 100,
+  hotMinProRatio: 0.05,
+  hotMaxProRatio: 0.6,
+  hotMinUtilityScore: 2,
   tgToken: '',
   tgChatId: '',
   memeBadges: ['Pons', 'bow.fun', 'Flap', 'Circus', 'Charms', 'Long.xyz', 'Bankr', 'Ape Store',
     'Zora', 'Clanker', 'Flaunch', 'Stroid', 'Klik', 'Trench', 'Livo',
     'Pump.fun', 'PumpFun', 'PumpSwap', 'Bags', 'Meteora DBC'],
-  memeKeywords: [
-    'pepe', 'inu', 'doge', 'shib', 'wif', 'bonk', 'elon', 'trump', 'moon',
+  memeKeywords: ['pepe', 'inu', 'doge', 'shib', 'wif', 'bonk', 'elon', 'trump', 'moon',
     'wojak', 'chad', 'frog', 'cat', 'dog', 'kitty', 'pup', 'baby', 'fart',
-    'butt', 'cum', 'tendies', 'rug', 'ape', 'monke', 'gigachad', 'meme'
-  ]
+    'butt', 'cum', 'tendies', 'rug', 'ape', 'monke', 'gigachad', 'meme']
 };
 
 const KNOWN_BADGES = [
@@ -37,27 +44,6 @@ const KNOWN_BADGES = [
   'Pump.fun', 'PumpSwap', 'Bags', 'Meteora DBC'
 ];
 
-const $ = (id) => document.getElementById(id);
-const flash = (text) => {
-  $('status').textContent = text;
-  setTimeout(() => { $('status').textContent = ''; }, 1500);
-};
-
-const loadSettings = async () => {
-  const res = await chrome.storage.local.get('settings');
-  return { ...DEFAULTS, ...(res.settings || {}) };
-};
-
-const saveSettings = async (patch) => {
-  const current = await loadSettings();
-  const next = { ...current, ...patch };
-  await chrome.storage.local.set({ settings: next });
-  flash('Saved');
-  return next;
-};
-
-// One row per hide metric (from BBD.HIDE_METRICS if present, else a static
-// mirror so the popup works standalone): [x] Label [max] %.
 const HIDE_METRICS = (self.BBD && BBD.HIDE_METRICS) || [
   { key: 'top10', label: 'Top-10 holders own >' },
   { key: 'insiders', label: 'Insiders own >' },
@@ -66,39 +52,145 @@ const HIDE_METRICS = (self.BBD && BBD.HIDE_METRICS) || [
   { key: 'dev', label: 'Dev holds >' }
 ];
 
+// [key, label, sub?] — checkboxes.
+const TOGGLES = {
+  feedToggles: [
+    ['filterEnabled', 'Hide meme coins on Pulse'],
+    ['hotEnabled', '🔥 / 💎 highlights on Pulse']
+  ],
+  tpToggles: [
+    ['reminderEnabled', 'Take-profit reminders'],
+    ['notifyEnabled', 'Chrome notifications', 'Desktop ping when a held position crosses the threshold']
+  ],
+  tgToggles: [
+    ['laptopHotAlerts', '🔥 Telegram alerts from this laptop', 'Turn off if a VPS watcher covers discovery']
+  ]
+};
+
+// [key, label, min, max, unit, scale?] — scale converts stored↔shown (ratios).
+const NUMBERS = {
+  hotGates: [
+    ['hotMaxTop10', 'Max top-10 holders', 0, 100, '%'],
+    ['hotMaxDev', 'Max dev holdings', 0, 100, '%'],
+    ['hotMaxSnipers', 'Max snipers', 0, 100, '%'],
+    ['hotMaxBundlers', 'Max bundlers', 0, 100, '%'],
+    ['hotMaxInsiders', 'Max insiders', 0, 100, '%'],
+    ['hotMinHolders', 'Min holders', 0, 100000, ''],
+    ['hotMinProRatio', 'Min pro-trader share', 0, 100, '%', 100],
+    ['hotMaxProRatio', 'Max pro-trader share', 0, 100, '%', 100],
+    ['hotMinUtilityScore', 'Min utility score', 0, 20, '']
+  ],
+  scoreFields: [
+    ['minScore', 'Hide below score', -10, 10, ''],
+    ['gemMinScore', 'Flag 💎 gem at score ≥', 1, 20, '']
+  ],
+  tpFields: [
+    ['thresholdPct', 'Remind when up', 1, 1000, '%'],
+    ['snoozeMin', 'Snooze length', 1, 240, 'min'],
+    ['refireStepPct', 'Re-nag after climb of', 1, 500, 'pts']
+  ]
+};
+
+const $ = (id) => document.getElementById(id);
+let toastTimer = null;
+const flash = () => {
+  const el = $('status');
+  el.textContent = 'Saved';
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 1100);
+};
+
+const loadSettings = async () => {
+  const res = await chrome.storage.local.get('settings');
+  return { ...DEFAULTS, ...(res.settings || {}) };
+};
+const saveSettings = async (patch) => {
+  const current = await loadSettings();
+  await chrome.storage.local.set({ settings: { ...current, ...patch } });
+  flash();
+};
+
+const el = (tag, cls, text) => {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text != null) n.textContent = text;
+  return n;
+};
+
+const renderToggle = (key, label, sub, settings) => {
+  const row = el('div', 'row');
+  const labelWrap = el('span', 'label');
+  labelWrap.append(document.createTextNode(label));
+  if (sub) labelWrap.append(el('span', 'sub', sub));
+
+  const toggle = el('label', 'toggle');
+  const input = el('input');
+  input.type = 'checkbox';
+  input.checked = Boolean(settings[key]);
+  input.addEventListener('change', () => saveSettings({ [key]: input.checked }));
+  toggle.append(input, el('span', 'box'));
+
+  row.append(labelWrap, toggle);
+  return row;
+};
+
+const renderNumber = ([key, label, min, max, unit, scale], settings) => {
+  const row = el('div', 'row numrow');
+  row.append(el('span', 'label', label));
+  const field = el('span', 'field');
+  const input = el('input');
+  input.type = 'number';
+  input.min = String(scale ? min : min);
+  input.max = String(max);
+  input.value = String(scale ? Math.round(settings[key] * scale) : settings[key]);
+  input.addEventListener('change', () => {
+    const shown = Number(input.value);
+    if (!Number.isFinite(shown) || shown < min || shown > max) {
+      input.value = String(scale ? Math.round(settings[key] * scale) : settings[key]);
+      return;
+    }
+    saveSettings({ [key]: scale ? shown / scale : shown });
+    settings[key] = scale ? shown / scale : shown;
+  });
+  field.append(input);
+  if (unit) field.append(el('span', 'unit', unit));
+  row.append(field);
+  return row;
+};
+
 const renderHideRules = (settings) => {
   const wrap = $('hideRules');
   wrap.innerHTML = '';
   for (const m of HIDE_METRICS) {
     const onKey = `hide_${m.key}_on`;
     const maxKey = `hide_${m.key}_max`;
-    const row = document.createElement('label');
-    row.style.display = 'flex';
-    row.style.alignItems = 'center';
-    row.style.gap = '6px';
+    const row = el('div', 'row numrow');
 
-    const cb = document.createElement('input');
+    const left = el('span', 'label');
+    const toggle = el('label', 'toggle');
+    toggle.style.marginRight = '8px';
+    const cb = el('input');
     cb.type = 'checkbox';
     cb.checked = Boolean(settings[onKey]);
     cb.addEventListener('change', () => saveSettings({ [onKey]: cb.checked }));
+    toggle.append(cb, el('span', 'box'));
+    left.style.display = 'flex';
+    left.style.alignItems = 'center';
+    left.append(toggle, document.createTextNode(m.label));
 
-    const txt = document.createElement('span');
-    txt.textContent = m.label;
-
-    const num = document.createElement('input');
+    const field = el('span', 'field');
+    const num = el('input');
     num.type = 'number';
-    num.min = '1';
-    num.max = '100';
-    num.style.width = '52px';
-    num.value = settings[maxKey];
+    num.min = '1'; num.max = '100';
+    num.value = String(settings[maxKey]);
     num.addEventListener('change', () => {
       const v = Number(num.value);
-      if (v >= 1 && v <= 100) saveSettings({ [maxKey]: v });
+      if (v >= 1 && v <= 100) { saveSettings({ [maxKey]: v }); settings[maxKey] = v; }
+      else num.value = String(settings[maxKey]);
     });
-
-    const pct = document.createElement('span');
-    pct.textContent = '%';
-    row.append(cb, txt, num, pct);
+    field.append(num, el('span', 'unit', '%'));
+    row.append(left, field);
     wrap.appendChild(row);
   }
 };
@@ -107,16 +199,14 @@ const renderBadges = (settings) => {
   const wrap = $('badges');
   wrap.innerHTML = '';
   for (const badge of KNOWN_BADGES) {
-    const label = document.createElement('label');
-    const on = settings.memeBadges.includes(badge);
-    label.className = on ? 'on' : '';
-    label.textContent = (on ? '🚫 ' : '') + badge;
+    const label = el('label', settings.memeBadges.includes(badge) ? 'on' : '', badge);
     label.addEventListener('click', async () => {
       const cur = await loadSettings();
       const memeBadges = cur.memeBadges.includes(badge)
         ? cur.memeBadges.filter((b) => b !== badge)
         : [...cur.memeBadges, badge];
-      renderBadges(await saveSettings({ memeBadges }));
+      await saveSettings({ memeBadges });
+      renderBadges(await loadSettings());
     });
     wrap.appendChild(label);
   }
@@ -128,65 +218,59 @@ const renderOverrides = async () => {
   const wrap = $('overrides');
   wrap.innerHTML = '';
   const entries = Object.entries(overrides);
-  if (entries.length === 0) {
-    wrap.innerHTML = '<span class="hint">None yet.</span>';
-    return;
-  }
+  if (!entries.length) { wrap.append(el('div', 'hint', 'None yet.')); return; }
   for (const [addr, mode] of entries) {
-    const row = document.createElement('div');
-    const label = document.createElement('span');
-    label.textContent = `${mode === 'hide' ? '🚫' : '✓'} ${addr.slice(0, 10)}…`;
-    const del = document.createElement('button');
-    del.textContent = 'remove';
+    const row = el('div', 'ov-row');
+    row.append(el('span', null, `${mode === 'hide' ? '⊘' : '✓'} ${addr.slice(0, 10)}…`));
+    const del = el('button', null, 'remove');
     del.addEventListener('click', async () => {
       const { [addr]: _gone, ...rest } = overrides;
       await chrome.storage.local.set({ overrides: rest });
       renderOverrides();
     });
-    row.append(label, del);
+    row.append(del);
     wrap.appendChild(row);
   }
 };
 
 const init = async () => {
   const settings = await loadSettings();
+  try { $('plate').textContent = 'v' + chrome.runtime.getManifest().version; } catch (e) { /* */ }
 
-  for (const id of ['filterEnabled', 'hideByTopHolder', 'hotEnabled', 'laptopHotAlerts', 'reminderEnabled', 'notifyEnabled']) {
-    $(id).checked = Boolean(settings[id]);
-    $(id).addEventListener('change', () => saveSettings({ [id]: $(id).checked }));
+  for (const [mount, list] of Object.entries(TOGGLES)) {
+    const box = $(mount);
+    list.forEach(([k, label, sub]) => box.append(renderToggle(k, label, sub, settings)));
   }
-  for (const id of ['thresholdPct', 'snoozeMin', 'minScore', 'gemMinScore', 'maxTaxPct']) {
-    $(id).value = settings[id];
-    $(id).addEventListener('change', () => {
-      const value = Number($(id).value);
-      const mustBePositive = id === 'thresholdPct' || id === 'snoozeMin';
-      // gemMinScore floor: 0 would mark every visible token a gem (#7).
-      if (id === 'gemMinScore' && value < 1) return;
-      if (id === 'maxTaxPct' && !(value >= 0 && value <= 100)) return;
-      if (Number.isFinite(value) && (!mustBePositive || value > 0)) {
-        saveSettings({ [id]: value });
-      }
-    });
+  for (const [mount, list] of Object.entries(NUMBERS)) {
+    const box = $(mount);
+    list.forEach((spec) => box.append(renderNumber(spec, settings)));
   }
-  renderHideRules(settings);
+
+  $('maxTaxPct').value = String(settings.maxTaxPct);
+  $('maxTaxPct').addEventListener('change', () => {
+    const v = Number($('maxTaxPct').value);
+    if (v >= 0 && v <= 100) saveSettings({ maxTaxPct: v });
+    else $('maxTaxPct').value = String(settings.maxTaxPct);
+  });
+
   for (const id of ['tgToken', 'tgChatId']) {
     $(id).value = settings[id] || '';
     $(id).addEventListener('change', () => saveSettings({ [id]: $(id).value.trim() }));
   }
+
   $('memeKeywords').value = settings.memeKeywords.join(', ');
   $('memeKeywords').addEventListener('change', () => {
-    const memeKeywords = $('memeKeywords').value
-      .split(',')
-      .map((s) => s.trim().toLowerCase())
-      .filter(Boolean);
+    const memeKeywords = $('memeKeywords').value.split(',')
+      .map((s) => s.trim().toLowerCase()).filter(Boolean);
     saveSettings({ memeKeywords });
   });
 
+  renderHideRules(settings);
   renderBadges(settings);
   renderOverrides();
 };
 
 init().catch((err) => {
-  $('status').textContent = 'Failed to load settings';
+  const s = $('status'); if (s) { s.textContent = 'Load failed'; s.classList.add('show'); }
   console.error('[bbd] popup init failed', err);
 });

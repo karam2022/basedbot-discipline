@@ -2,77 +2,80 @@
 <html>
 <head>
   <meta charset="utf-8" />
-  <style>
-    body {
-      width: 320px;
-      margin: 0;
-      padding: 14px;
-      background: #0b1120;
-      color: #e5e7eb;
-      font: 13px/1.5 system-ui, sans-serif;
-    }
-    h1 { font-size: 14px; margin: 0 0 10px; color: #22c55e; }
-    h2 { font-size: 12px; margin: 14px 0 6px; color: #94a3b8; text-transform: uppercase; }
-    label { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
-    input[type="number"] { width: 60px; background: #1e293b; color: #e5e7eb;
-      border: 1px solid #334155; border-radius: 4px; padding: 3px 6px; }
-    textarea { width: 100%; height: 64px; background: #1e293b; color: #e5e7eb;
-      border: 1px solid #334155; border-radius: 4px; padding: 6px; box-sizing: border-box;
-      font: 12px/1.4 monospace; }
-    .badge-row { display: flex; flex-wrap: wrap; gap: 4px; }
-    .badge-row label { background: #1e293b; border: 1px solid #334155; border-radius: 999px;
-      padding: 2px 10px; margin: 0; cursor: pointer; }
-    .badge-row label.on { border-color: #ef4444; color: #fca5a5; }
-    #overrides div { display: flex; justify-content: space-between; padding: 2px 0; }
-    #overrides button { background: none; border: none; color: #ef4444; cursor: pointer; }
-    #status { color: #22c55e; height: 16px; margin-top: 8px; }
-    .hint { color: #64748b; font-size: 11px; }
-  </style>
+  <link rel="stylesheet" href="popup.css" />
 </head>
 <body>
-  <h1>BasedBot Discipline</h1>
+  <header class="masthead">
+    <div class="eyebrow">Discipline · Control Plane</div>
+    <h1>BasedBot<br>Discipline</h1>
+    <div class="plate" id="plate">v0.0</div>
+  </header>
 
-  <label><input type="checkbox" id="filterEnabled" /> Hide meme coins on Pulse</label>
-  <label><input type="checkbox" id="hotEnabled" /> 🔥 Best-guess highlight</label>
-  <label><input type="checkbox" id="laptopHotAlerts" /> 🔥 Telegram alerts from this laptop
-    <span class="hint">(turn off if a VPS watcher covers you)</span></label>
-  <label><input type="checkbox" id="reminderEnabled" /> Take-profit reminders</label>
-  <label><input type="checkbox" id="notifyEnabled" /> Chrome notifications</label>
+  <section class="section">
+    <div class="eyebrow">Feed</div>
+    <div id="feedToggles"></div>
+  </section>
 
-  <h2>Sell reminder</h2>
-  <label>Remind when up <input type="number" id="thresholdPct" min="1" max="1000" /> %</label>
-  <label>Snooze length <input type="number" id="snoozeMin" min="1" max="240" /> min</label>
+  <section class="section">
+    <div class="eyebrow">Safety hide rules</div>
+    <div id="hideRules"></div>
+    <div class="row numrow" style="margin-top:6px">
+      <span class="label">🛡 Flag buy/sell tax over
+        <span class="sub">Token page only — tax isn't on the feed</span></span>
+      <span class="field"><input type="number" id="maxTaxPct" min="0" max="100" /><span class="unit">%</span></span>
+    </div>
+  </section>
 
-  <h2>Safety hide rules</h2>
-  <div id="hideRules"></div>
-  <div class="hint">Hide any token exceeding an enabled limit — applies even to
-  tokens with a website. Never hides coins you hold or marked "always show".</div>
-  <label style="margin-top:6px">🛡 Flag buy/sell tax over
-    <input type="number" id="maxTaxPct" min="0" max="100" style="width:52px" /> %
-    <span class="hint">(token page only — tax isn't on the feed)</span></label>
+  <section class="section">
+    <div class="eyebrow">Best-guess gates · 🔥</div>
+    <div class="hint" style="margin:-4px 0 10px">A token earns 🔥 only if it clears every gate below.</div>
+    <div id="hotGates"></div>
+  </section>
 
-  <h2>Utility score</h2>
-  <label>Hide tokens scoring below <input type="number" id="minScore" min="-10" max="10" /></label>
-  <label>Flag 💎 gems at score ≥ <input type="number" id="gemMinScore" min="0" max="20" /></label>
-  <div class="hint">Score = launchpad (meme pad −3, Virtual +1) + socials (GitHub/MCP +4,
-  Docs +3, Website/Discord/Medium/YouTube +1) − meme keywords (−3).</div>
+  <section class="section">
+    <div class="eyebrow">Utility score</div>
+    <div id="scoreFields"></div>
+    <div class="hint">Score = launchpad (meme pad −3, Virtual +1) + socials (GitHub/MCP +4,
+      Docs +3, Website/Discord/Medium/YouTube +1) − meme keywords (−3).</div>
+  </section>
 
-  <h2>Meme launchpad badges to hide</h2>
-  <div class="badge-row" id="badges"></div>
+  <section class="section">
+    <div class="eyebrow">Take-profit</div>
+    <div id="tpToggles"></div>
+    <div id="tpFields" style="margin-top:4px"></div>
+  </section>
 
-  <h2>Meme keywords</h2>
-  <textarea id="memeKeywords" spellcheck="false"></textarea>
-  <div class="hint">Comma-separated, matched against name + ticker.</div>
+  <section class="section">
+    <div class="eyebrow">Telegram</div>
+    <div id="tgToggles"></div>
+    <div class="row"><span class="label">Bot token</span>
+      <input type="text" id="tgToken" style="width:150px" placeholder="123456:ABC…" /></div>
+    <div class="row"><span class="label">Chat ID</span>
+      <input type="text" id="tgChatId" style="width:110px" placeholder="auto-detects" /></div>
+    <div class="hint">@BotFather → token, message the bot once → chat ID auto-fills.
+      🔥 alerts go only here; take-profit goes here + Chrome.</div>
+  </section>
 
-  <h2>Telegram alerts (optional)</h2>
-  <label>Bot token <input type="text" id="tgToken" style="width:170px" placeholder="123456:ABC..." /></label>
-  <label>Chat ID <input type="text" id="tgChatId" style="width:110px" placeholder="123456789" /></label>
-  <div class="hint">Create a bot with @BotFather, get your chat ID from @userinfobot,
-  then message your bot once. 🔥 best guesses go ONLY here; take-profit alerts go
-  here + Chrome notifications.</div>
+  <section class="section">
+    <div class="eyebrow">Meme launchpads</div>
+    <div class="badge-row" id="badges"></div>
+  </section>
 
-  <h2>Your overrides</h2>
-  <div id="overrides"><span class="hint">None yet.</span></div>
+  <section class="section">
+    <div class="eyebrow">Meme keywords</div>
+    <textarea id="memeKeywords" spellcheck="false"></textarea>
+    <div class="hint">Comma-separated, matched against name + ticker.</div>
+  </section>
+
+  <section class="section">
+    <div class="eyebrow">Your overrides</div>
+    <div id="overrides"></div>
+  </section>
+
+  <div class="colophon">
+    <span>Polkadot · Second Age</span>
+    <span id="coloRight">Plate · Discipline</span>
+  </div>
 
   <div id="status"></div>
   <script src="popup.js"></script>
