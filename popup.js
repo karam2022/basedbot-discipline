@@ -1,138 +1,215 @@
-// Popup settings UI. Reads/writes chrome.storage.local; content scripts react
-// via storage.onChanged.
+// Popup settings UI (OpenGov 2.0 monochrome). Schema-driven so every tunable
+// parameter is editable; content scripts react via chrome.storage.onChanged.
 'use strict';
 
-// Single source of truth: constants.js (loaded before this script) provides
-// BBD.DEFAULT_SETTINGS and BBD.KNOWN_BADGES — no more hand-mirrored copies here.
-// Only the popup-only Telegram credentials are layered on top.
-const DEFAULTS = { ...BBD.DEFAULT_SETTINGS, tgToken: '', tgChatId: '' };
-const KNOWN_BADGES = BBD.KNOWN_BADGES;
+const DEFAULTS = {
+  filterEnabled: true,
+  hotEnabled: true,
+  laptopHotAlerts: true,
+  reminderEnabled: true,
+  notifyEnabled: false,
+  thresholdPct: 20,
+  snoozeMin: 15,
+  refireStepPct: 10,
+  minScore: 2,
+  gemMinScore: 4,
+  hide_top10_on: true, hide_top10_max: 40,
+  hide_insiders_on: false, hide_insiders_max: 20,
+  hide_bundlers_on: false, hide_bundlers_max: 30,
+  hide_snipers_on: false, hide_snipers_max: 30,
+  hide_dev_on: false, hide_dev_max: 10,
+  maxTaxPct: 10,
+  hotMaxTop10: 30,
+  hotMaxDev: 2,
+  hotMaxSnipers: 15,
+  hotMaxBundlers: 15,
+  hotMaxInsiders: 20,
+  hotMinHolders: 100,
+  hotMinProRatio: 0.05,
+  hotMaxProRatio: 0.6,
+  hotMinUtilityScore: 2,
+  tgToken: '',
+  tgChatId: '',
+  memeBadges: ['Pons', 'bow.fun', 'Flap', 'Circus', 'Charms', 'Long.xyz', 'Bankr', 'Ape Store',
+    'Zora', 'Clanker', 'Flaunch', 'Stroid', 'Klik', 'Trench', 'Livo',
+    'Pump.fun', 'PumpFun', 'PumpSwap', 'Bags', 'Meteora DBC'],
+  memeKeywords: ['pepe', 'inu', 'doge', 'shib', 'wif', 'bonk', 'elon', 'trump', 'moon',
+    'wojak', 'chad', 'frog', 'cat', 'dog', 'kitty', 'pup', 'baby', 'fart',
+    'butt', 'cum', 'tendies', 'rug', 'ape', 'monke', 'gigachad', 'meme']
+};
+
+const KNOWN_BADGES = [
+  'Pons', 'Virtual', 'bow.fun', 'Flap', 'Circus', 'Charms', 'Bankr', 'Long.xyz',
+  'Ape Store', 'Zora', 'Clanker', 'Flaunch', 'Stroid', 'Klik', 'Trench', 'Livo',
+  'Pump.fun', 'PumpSwap', 'Bags', 'Meteora DBC'
+];
+
+const HIDE_METRICS = (self.BBD && BBD.HIDE_METRICS) || [
+  { key: 'top10', label: 'Top-10 holders own >' },
+  { key: 'insiders', label: 'Insiders own >' },
+  { key: 'bundlers', label: 'Bundlers own >' },
+  { key: 'snipers', label: 'Snipers own >' },
+  { key: 'dev', label: 'Dev holds >' }
+];
+
+// [key, label, sub?] — checkboxes.
+const TOGGLES = {
+  feedToggles: [
+    ['filterEnabled', 'Hide meme coins on Pulse'],
+    ['hotEnabled', '🔥 / 💎 highlights on Pulse']
+  ],
+  tpToggles: [
+    ['reminderEnabled', 'Take-profit reminders'],
+    ['notifyEnabled', 'Chrome notifications', 'Desktop ping when a held position crosses the threshold']
+  ],
+  tgToggles: [
+    ['laptopHotAlerts', '🔥 Telegram alerts from this laptop', 'Turn off if a VPS watcher covers discovery']
+  ]
+};
+
+// [key, label, min, max, unit, scale?] — scale converts stored↔shown (ratios).
+const NUMBERS = {
+  hotGates: [
+    ['hotMaxTop10', 'Max top-10 holders', 0, 100, '%'],
+    ['hotMaxDev', 'Max dev holdings', 0, 100, '%'],
+    ['hotMaxSnipers', 'Max snipers', 0, 100, '%'],
+    ['hotMaxBundlers', 'Max bundlers', 0, 100, '%'],
+    ['hotMaxInsiders', 'Max insiders', 0, 100, '%'],
+    ['hotMinHolders', 'Min holders', 0, 100000, ''],
+    ['hotMinProRatio', 'Min pro-trader share', 0, 100, '%', 100],
+    ['hotMaxProRatio', 'Max pro-trader share', 0, 100, '%', 100],
+    ['hotMinUtilityScore', 'Min utility score', 0, 20, '']
+  ],
+  scoreFields: [
+    ['minScore', 'Hide below score', -10, 10, ''],
+    ['gemMinScore', 'Flag 💎 gem at score ≥', 1, 20, '']
+  ],
+  tpFields: [
+    ['thresholdPct', 'Remind when up', 1, 1000, '%'],
+    ['snoozeMin', 'Snooze length', 1, 240, 'min'],
+    ['refireStepPct', 'Re-nag after climb of', 1, 500, 'pts']
+  ]
+};
 
 const $ = (id) => document.getElementById(id);
-const flash = (text, error = false) => {
-  $('status').classList.toggle('error', error);
-  $('status').textContent = text;
-  setTimeout(() => {
-    $('status').textContent = '';
-    $('status').classList.remove('error');
-  }, error ? 3500 : 1800);
+let toastTimer = null;
+const flash = () => {
+  const el = $('status');
+  el.textContent = 'Saved';
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 1100);
 };
 
 const loadSettings = async () => {
   const res = await chrome.storage.local.get('settings');
   return { ...DEFAULTS, ...(res.settings || {}) };
 };
-
 const saveSettings = async (patch) => {
   const current = await loadSettings();
-  const next = { ...current, ...patch };
-  await chrome.storage.local.set({ settings: next });
-  flash('Saved');
-  return next;
+  await chrome.storage.local.set({ settings: { ...current, ...patch } });
+  flash();
+};
+
+const el = (tag, cls, text) => {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text != null) n.textContent = text;
+  return n;
+};
+
+const renderToggle = (key, label, sub, settings) => {
+  const row = el('div', 'row');
+  const labelWrap = el('span', 'label');
+  labelWrap.append(document.createTextNode(label));
+  if (sub) labelWrap.append(el('span', 'sub', sub));
+
+  const toggle = el('label', 'toggle');
+  const input = el('input');
+  input.type = 'checkbox';
+  input.checked = Boolean(settings[key]);
+  input.addEventListener('change', () => saveSettings({ [key]: input.checked }));
+  toggle.append(input, el('span', 'box'));
+
+  row.append(labelWrap, toggle);
+  return row;
+};
+
+const renderNumber = ([key, label, min, max, unit, scale], settings) => {
+  const row = el('div', 'row numrow');
+  row.append(el('span', 'label', label));
+  const field = el('span', 'field');
+  const input = el('input');
+  input.type = 'number';
+  input.min = String(scale ? min : min);
+  input.max = String(max);
+  input.value = String(scale ? Math.round(settings[key] * scale) : settings[key]);
+  input.addEventListener('change', () => {
+    const shown = Number(input.value);
+    if (!Number.isFinite(shown) || shown < min || shown > max) {
+      input.value = String(scale ? Math.round(settings[key] * scale) : settings[key]);
+      return;
+    }
+    saveSettings({ [key]: scale ? shown / scale : shown });
+    settings[key] = scale ? shown / scale : shown;
+  });
+  field.append(input);
+  if (unit) field.append(el('span', 'unit', unit));
+  row.append(field);
+  return row;
+};
+
+const renderHideRules = (settings) => {
+  const wrap = $('hideRules');
+  wrap.innerHTML = '';
+  for (const m of HIDE_METRICS) {
+    const onKey = `hide_${m.key}_on`;
+    const maxKey = `hide_${m.key}_max`;
+    const row = el('div', 'row numrow');
+
+    const left = el('span', 'label');
+    const toggle = el('label', 'toggle');
+    toggle.style.marginRight = '8px';
+    const cb = el('input');
+    cb.type = 'checkbox';
+    cb.checked = Boolean(settings[onKey]);
+    cb.addEventListener('change', () => saveSettings({ [onKey]: cb.checked }));
+    toggle.append(cb, el('span', 'box'));
+    left.style.display = 'flex';
+    left.style.alignItems = 'center';
+    left.append(toggle, document.createTextNode(m.label));
+
+    const field = el('span', 'field');
+    const num = el('input');
+    num.type = 'number';
+    num.min = '1'; num.max = '100';
+    num.value = String(settings[maxKey]);
+    num.addEventListener('change', () => {
+      const v = Number(num.value);
+      if (v >= 1 && v <= 100) { saveSettings({ [maxKey]: v }); settings[maxKey] = v; }
+      else num.value = String(settings[maxKey]);
+    });
+    field.append(num, el('span', 'unit', '%'));
+    row.append(left, field);
+    wrap.appendChild(row);
+  }
 };
 
 const renderBadges = (settings) => {
   const wrap = $('badges');
   wrap.innerHTML = '';
   for (const badge of KNOWN_BADGES) {
-    const label = document.createElement('label');
-    const on = settings.memeBadges.includes(badge);
-    label.className = on ? 'on' : '';
-    label.textContent = (on ? '🚫 ' : '') + badge;
+    const label = el('label', settings.memeBadges.includes(badge) ? 'on' : '', badge);
     label.addEventListener('click', async () => {
       const cur = await loadSettings();
       const memeBadges = cur.memeBadges.includes(badge)
         ? cur.memeBadges.filter((b) => b !== badge)
         : [...cur.memeBadges, badge];
-      renderBadges(await saveSettings({ memeBadges }));
+      await saveSettings({ memeBadges });
+      renderBadges(await loadSettings());
     });
     wrap.appendChild(label);
   }
-};
-
-// Standalone journal summary (popup has no access to the content-script BBD
-// namespace; keep this in sync with BBD.journal.summarize).
-const summarizeJournal = (journal) => {
-  const all = Object.values(journal || {});
-  const closed = all.filter((e) => e.status === 'closed' && e.tradeId && typeof e.exitPct === 'number');
-  const n = closed.length;
-  const wins = closed.filter((e) => e.exitPct > 0).length;
-  const gb = closed.filter((e) => typeof e.peakPct === 'number' && e.peakPct > 0)
-    .map((e) => e.peakPct - e.exitPct);
-  const flagged = closed.filter((e) => e.entryVerdict && e.entryVerdict.devFlagged);
-  const flaggedLosses = flagged.filter((e) => e.exitPct <= 0).length;
-  const mean = (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
-  return {
-    openCount: all.filter((e) => e.status === 'open').length,
-    closedCount: n,
-    winRate: n ? Math.round((100 * wins) / n) : 0,
-    avgExitPct: Math.round(mean(closed.map((e) => e.exitPct))),
-    avgGiveBackPct: Math.round(mean(gb)),
-    flaggedCount: flagged.length,
-    flaggedLossRate: flagged.length ? Math.round((100 * flaggedLosses) / flagged.length) : 0,
-    unknownExitCount: all.filter((e) => e.status === 'closed' &&
-      (!e.tradeId || typeof e.exitPct !== 'number')).length
-  };
-};
-
-const renderJournal = async () => {
-  const res = await chrome.storage.local.get('journal');
-  const s = summarizeJournal(res.journal || {});
-  const wrap = $('journal');
-  wrap.innerHTML = '';
-  if (s.closedCount === 0) {
-    wrap.innerHTML = `<span class="hint">No closed trades yet${s.openCount ? ` · ${s.openCount} open` : ''}.</span>`;
-    return;
-  }
-  const line = (label, val) => {
-    const row = document.createElement('div');
-    const l = document.createElement('span');
-    l.textContent = label;
-    const v = document.createElement('span');
-    v.textContent = val;
-    row.append(l, v);
-    wrap.appendChild(row);
-  };
-  line('Closed trades', `${s.closedCount}${s.openCount ? ` (+${s.openCount} open)` : ''}`);
-  line('Win rate', `${s.winRate}%`);
-  line('Avg tracked exit', `${s.avgExitPct >= 0 ? '+' : ''}${s.avgExitPct}%`);
-  line('Avg profit given back', `${s.avgGiveBackPct}%`);
-  if (s.unknownExitCount) line('Closed without fresh exit', `${s.unknownExitCount}`);
-  if (s.flaggedCount) line('Flagged-dev buys', `${s.flaggedCount} · ${s.flaggedLossRate}% lost`);
-};
-
-const renderHealth = async () => {
-  const res = await chrome.storage.local.get(['positions', 'positionsMeta']);
-  const positions = res.positions || {};
-  const meta = res.positionsMeta || {};
-  const wrap = $('health');
-  wrap.innerHTML = '';
-  const line = (label, value) => {
-    const row = document.createElement('div');
-    const l = document.createElement('span');
-    const v = document.createElement('span');
-    l.textContent = label;
-    v.textContent = value;
-    row.append(l, v);
-    wrap.appendChild(row);
-  };
-  const ageMs = typeof meta.sourceTs === 'number' ? Date.now() - meta.sourceTs : null;
-  const age = ageMs === null ? 'waiting…' : ageMs < 5000 ? 'just now'
-    : ageMs < 60000 ? `${Math.round(ageMs / 1000)}s ago`
-      : `${Math.round(ageMs / 60000)}m ago`;
-  line('Positions tracked', String(Object.keys(positions).length));
-  const valued = Object.values(positions).filter((p) => typeof p.valueUsd === 'number' && p.valueUsd >= 0);
-  const totalValue = valued.reduce((sum, p) => sum + p.valueUsd, 0);
-  if (totalValue > 0) {
-    const largest = Math.max(...valued.map((p) => p.valueUsd));
-    line('Tracked position value', `$${totalValue.toLocaleString('en-US', { maximumFractionDigits: 2 })}`);
-    line('Largest position share', `${Math.round(100 * largest / totalValue)}%`);
-  }
-  line('Source', meta.source === 'balances-api' ? 'BasedBot balances API'
-    : meta.source === 'dom-fallback' ? 'Visible page fallback' : 'Not connected yet');
-  line('Last source update', age);
-  if (ageMs !== null && ageMs > BBD.STALE_MS) line('Status', '⚠️ stale — alerts paused');
-  else if (ageMs !== null) line('Status', '✓ live');
 };
 
 const renderOverrides = async () => {
@@ -141,155 +218,59 @@ const renderOverrides = async () => {
   const wrap = $('overrides');
   wrap.innerHTML = '';
   const entries = Object.entries(overrides);
-  if (entries.length === 0) {
-    wrap.innerHTML = '<span class="hint">None yet.</span>';
-    return;
-  }
+  if (!entries.length) { wrap.append(el('div', 'hint', 'None yet.')); return; }
   for (const [addr, mode] of entries) {
-    const row = document.createElement('div');
-    const label = document.createElement('span');
-    label.textContent = `${mode === 'hide' ? '🚫' : '✓'} ${addr.slice(0, 10)}…`;
-    const del = document.createElement('button');
-    del.textContent = 'remove';
+    const row = el('div', 'ov-row');
+    row.append(el('span', null, `${mode === 'hide' ? '⊘' : '✓'} ${addr.slice(0, 10)}…`));
+    const del = el('button', null, 'remove');
     del.addEventListener('click', async () => {
       const { [addr]: _gone, ...rest } = overrides;
       await chrome.storage.local.set({ overrides: rest });
       renderOverrides();
     });
-    row.append(label, del);
+    row.append(del);
     wrap.appendChild(row);
   }
 };
 
 const init = async () => {
   const settings = await loadSettings();
+  try { $('plate').textContent = 'v' + chrome.runtime.getManifest().version; } catch (e) { /* */ }
 
-  for (const id of ['filterEnabled', 'cardIntelEnabled', 'hotEnabled', 'auditGuardEnabled', 'laptopHotAlerts', 'creatorGuardEnabled', 'reminderEnabled', 'stopLossEnabled', 'peakGivebackEnabled', 'journalEnabled', 'fomoGuardEnabled', 'dumpAlertsEnabled', 'notifyEnabled']) {
-    $(id).checked = Boolean(settings[id]);
-    $(id).addEventListener('change', () => saveSettings({ [id]: $(id).checked }));
+  for (const [mount, list] of Object.entries(TOGGLES)) {
+    const box = $(mount);
+    list.forEach(([k, label, sub]) => box.append(renderToggle(k, label, sub, settings)));
   }
-  for (const id of ['thresholdPct', 'snoozeMin', 'stopLossPct', 'peakGivebackPct', 'minScore', 'gemMinScore', 'creatorMaxLaunches', 'creatorMaxRugs', 'dailyLossLimit', 'revengeToastSec', 'whaleSellUsd', 'whaleSellLiquidityPct']) {
-    $(id).value = settings[id];
-    $(id).addEventListener('change', () => {
-      const value = Number($(id).value);
-      // These floor at 1; the rest may go to/through zero (or negative, minScore).
-      const mustBePositive = ['thresholdPct', 'snoozeMin', 'stopLossPct', 'peakGivebackPct', 'creatorMaxLaunches', 'creatorMaxRugs', 'dailyLossLimit', 'revengeToastSec', 'whaleSellUsd', 'whaleSellLiquidityPct'].includes(id);
-      // gemMinScore floor: 0 would mark every visible token a gem (#7).
-      if (id === 'gemMinScore' && value < 1) return;
-      if (!$(id).checkValidity()) {
-        flash('Value is outside the allowed range', true);
-        $(id).value = settings[id];
-      } else if (Number.isFinite(value) && (!mustBePositive || value > 0)) {
-        saveSettings({ [id]: value });
-      }
-    });
+  for (const [mount, list] of Object.entries(NUMBERS)) {
+    const box = $(mount);
+    list.forEach((spec) => box.append(renderNumber(spec, settings)));
   }
+
+  $('maxTaxPct').value = String(settings.maxTaxPct);
+  $('maxTaxPct').addEventListener('change', () => {
+    const v = Number($('maxTaxPct').value);
+    if (v >= 0 && v <= 100) saveSettings({ maxTaxPct: v });
+    else $('maxTaxPct').value = String(settings.maxTaxPct);
+  });
+
   for (const id of ['tgToken', 'tgChatId']) {
     $(id).value = settings[id] || '';
     $(id).addEventListener('change', () => saveSettings({ [id]: $(id).value.trim() }));
   }
+
   $('memeKeywords').value = settings.memeKeywords.join(', ');
   $('memeKeywords').addEventListener('change', () => {
-    const memeKeywords = $('memeKeywords').value
-      .split(',')
-      .map((s) => s.trim().toLowerCase())
-      .filter(Boolean);
+    const memeKeywords = $('memeKeywords').value.split(',')
+      .map((s) => s.trim().toLowerCase()).filter(Boolean);
     saveSettings({ memeKeywords });
   });
 
-  const clearJournal = $('clearJournal');
-  if (clearJournal) {
-    clearJournal.addEventListener('click', async () => {
-      if (!confirm('Delete the complete local trade journal? Export it first if you may need it.')) return;
-      await chrome.storage.local.set({ journal: {} });
-      renderJournal();
-      flash('Journal cleared');
-    });
-  }
-
-  $('exportJournal').addEventListener('click', async () => {
-    const { journal = {} } = await chrome.storage.local.get('journal');
-    const blob = new Blob([JSON.stringify({ exportedAt: new Date().toISOString(), journal }, null, 2)],
-      { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `basedbot-journal-${new Date().toISOString().slice(0, 10)}.json`;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-    flash('Journal exported');
-  });
-
-  $('toggleToken').addEventListener('click', () => {
-    const input = $('tgToken');
-    const showing = input.type === 'text';
-    input.type = showing ? 'password' : 'text';
-    $('toggleToken').textContent = showing ? 'show' : 'hide';
-    $('toggleToken').setAttribute('aria-label', showing ? 'Show bot token' : 'Hide bot token');
-  });
-
-  $('testTelegram').addEventListener('click', async () => {
-    const btn = $('testTelegram');
-    btn.disabled = true;
-    btn.textContent = 'Sending…';
-    try {
-      await saveSettings({ tgToken: $('tgToken').value.trim(), tgChatId: $('tgChatId').value.trim() });
-      const result = await chrome.runtime.sendMessage({ type: 'bbd-test-telegram' });
-      if (result && result.ok) flash('Telegram test sent');
-      else flash(result && result.reason || 'Telegram test failed', true);
-    } catch (err) {
-      flash(err.message || 'Telegram test failed', true);
-    } finally {
-      btn.disabled = false;
-      btn.textContent = 'Send test alert';
-    }
-  });
-
-  const applyPreset = async (patch, name) => {
-    await saveSettings(patch);
-    flash(`${name} preset applied`);
-    setTimeout(() => location.reload(), 250);
-  };
-  $('presetConservative').addEventListener('click', () => applyPreset({
-    thresholdPct: 15,
-    stopLossPct: 15,
-    peakGivebackPct: 10,
-    dailyLossLimit: 2,
-    revengeToastSec: 12,
-    whaleSellUsd: 200,
-    whaleSellLiquidityPct: 1,
-    minScore: 3,
-    gemMinScore: 5,
-    creatorMaxLaunches: 4,
-    creatorMaxRugs: 1
-  }, 'Conservative'));
-  $('presetBalanced').addEventListener('click', () => applyPreset({
-    thresholdPct: BBD.DEFAULT_SETTINGS.thresholdPct,
-    stopLossPct: BBD.DEFAULT_SETTINGS.stopLossPct,
-    peakGivebackPct: BBD.DEFAULT_SETTINGS.peakGivebackPct,
-    dailyLossLimit: BBD.DEFAULT_SETTINGS.dailyLossLimit,
-    revengeToastSec: BBD.DEFAULT_SETTINGS.revengeToastSec,
-    whaleSellUsd: BBD.DEFAULT_SETTINGS.whaleSellUsd,
-    whaleSellLiquidityPct: BBD.DEFAULT_SETTINGS.whaleSellLiquidityPct,
-    minScore: BBD.DEFAULT_SETTINGS.minScore,
-    gemMinScore: BBD.DEFAULT_SETTINGS.gemMinScore,
-    creatorMaxLaunches: BBD.DEFAULT_SETTINGS.creatorMaxLaunches,
-    creatorMaxRugs: BBD.DEFAULT_SETTINGS.creatorMaxRugs
-  }, 'Balanced'));
-
+  renderHideRules(settings);
   renderBadges(settings);
   renderOverrides();
-  renderJournal();
-  renderHealth();
-
-  chrome.storage.onChanged.addListener((changes, area) => {
-    if (area !== 'local') return;
-    if (changes.journal) renderJournal();
-    if (changes.positions || changes.positionsMeta) renderHealth();
-  });
 };
 
 init().catch((err) => {
-  $('status').textContent = 'Failed to load settings';
+  const s = $('status'); if (s) { s.textContent = 'Load failed'; s.classList.add('show'); }
   console.error('[bbd] popup init failed', err);
 });

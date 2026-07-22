@@ -43,6 +43,17 @@ BBD.DEFAULT_SETTINGS = Object.freeze({
   gemMinScore: 4,
   // Compact per-card safety readout (🛡 N/7) in each Pulse card's corner.
   cardIntelEnabled: true,
+  // Per-metric hard hide rules (see BBD.HIDE_METRICS). Each: hide any token
+  // whose stat exceeds the max %, regardless of utility. Held tokens and
+  // "always show" overrides are never hidden. top-10 on by default; the rest
+  // opt-in so the feed isn't suddenly gutted for people upgrading.
+  hide_top10_on: true, hide_top10_max: 40,
+  hide_insiders_on: false, hide_insiders_max: 20,
+  hide_bundlers_on: false, hide_bundlers_max: 30,
+  hide_snipers_on: false, hide_snipers_max: 30,
+  hide_dev_on: false, hide_dev_max: 10,
+  // Buy/sell tax ceiling — token-page 🛡 verdict only (tax isn't on the feed).
+  maxTaxPct: 10,
   // 🔥 best-guess highlight: card must pass every on-card safety metric AND
   // carry a utility signal. Thresholds derived from the profile shared by
   // verified runners (PONS, Index, wire) vs farms (RYFT: top10 82%, insiders 67%).
@@ -82,7 +93,11 @@ BBD.DEFAULT_SETTINGS = Object.freeze({
     'pepe', 'inu', 'doge', 'shib', 'wif', 'bonk', 'elon', 'trump', 'moon',
     'wojak', 'chad', 'frog', 'cat', 'dog', 'kitty', 'pup', 'baby', 'fart',
     'butt', 'cum', 'tendies', 'rug', 'ape', 'monke', 'gigachad', 'meme'
-  ]
+  ],
+  // Read only by the popup + background worker (from raw storage), but kept
+  // here so DEFAULT_SETTINGS is the single complete source of truth.
+  tgToken: '',
+  tgChatId: ''
 });
 
 // chrome.storage.local keys.
@@ -115,6 +130,17 @@ BBD.SCAN_DEBOUNCE_MS = 300;
 BBD.POLL_MS = 5000;
 BBD.ROUTE_POLL_MS = 1000;
 BBD.BALANCES_TTL_MS = 2 * 60 * 1000;
+
+// Configurable per-metric hide rules. `stat` is the field name on parsed card
+// stats; `label` is the popup wording. Drives DEFAULT_SETTINGS keys
+// (hide_<key>_on / hide_<key>_max), the classify() loop, and the popup UI.
+BBD.HIDE_METRICS = Object.freeze([
+  { key: 'top10', stat: 'top10', label: 'Top-10 holders own >' },
+  { key: 'insiders', stat: 'insiders', label: 'Insiders own >' },
+  { key: 'bundlers', stat: 'bundlers', label: 'Bundlers own >' },
+  { key: 'snipers', stat: 'snipers', label: 'Snipers own >' },
+  { key: 'dev', stat: 'dev', label: 'Dev holds >' }
+]);
 
 // Short/ambiguous keywords need word boundaries so BUTTERCOIN doesn't match
 // "butt" or Catalyst "cat"; distinctive meme words still match as substrings

@@ -1,0 +1,220 @@
+/* BasedBot Discipline — popup
+   Design language: OpenGov 2.0 "Plate series, monochrome".
+   Strict #0A0A0A → #FFFFFF, zero accent. Hierarchy by weight, texture, and
+   hairline structure. Unbounded (display) · Archivo (text) · JetBrains Mono
+   (labels + numerals). The dot & circle are structure, not decoration. */
+
+@font-face { font-family: 'Unbounded'; src: url('fonts/unbounded-800.woff2') format('woff2'); font-weight: 800; font-display: swap; }
+@font-face { font-family: 'Unbounded'; src: url('fonts/unbounded-700.woff2') format('woff2'); font-weight: 700; font-display: swap; }
+@font-face { font-family: 'Archivo'; src: url('fonts/archivo-400.woff2') format('woff2'); font-weight: 400; font-display: swap; }
+@font-face { font-family: 'Archivo'; src: url('fonts/archivo-600.woff2') format('woff2'); font-weight: 600; font-display: swap; }
+@font-face { font-family: 'JBMono'; src: url('fonts/jbmono-400.woff2') format('woff2'); font-weight: 400; font-display: swap; }
+@font-face { font-family: 'JBMono'; src: url('fonts/jbmono-500.woff2') format('woff2'); font-weight: 500; font-display: swap; }
+
+:root {
+  --ink: #ffffff;
+  --bg: #0a0a0a;
+  --surface: #101010;
+  --line: #2a2a2a;
+  --line-strong: #3d3d3d;
+  --muted: #8a8a8a;
+  --faint: #5c5c5c;
+  --display: 'Unbounded', system-ui, sans-serif;
+  --text: 'Archivo', system-ui, sans-serif;
+  --mono: 'JBMono', ui-monospace, 'SF Mono', monospace;
+  --z-toast: 60;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  width: 400px;
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--text);
+  font-size: 13px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---- Masthead ---------------------------------------------------------- */
+.masthead {
+  padding: 16px 18px 14px;
+  border-bottom: 1px solid var(--line);
+  position: relative;
+}
+.eyebrow {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  font-weight: 400;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+.masthead h1 {
+  font-family: var(--display);
+  font-weight: 800;
+  font-size: 21px;
+  line-height: 0.98;
+  letter-spacing: -0.02em;
+  margin: 8px 0 0;
+  text-transform: uppercase;
+}
+.masthead .plate {
+  position: absolute;
+  top: 16px;
+  right: 18px;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.14em;
+  color: var(--faint);
+}
+
+/* ---- Section ----------------------------------------------------------- */
+.section {
+  border-bottom: 1px solid var(--line);
+  padding: 14px 18px 16px;
+}
+.section > .eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  color: #9a9a9a; /* legible (≈5.9:1); masthead/colophon stay faint as framing */
+}
+.section > .eyebrow::before {
+  /* the dot & circle motif as a section marker */
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  border: 1px solid var(--muted);
+  flex: none;
+}
+
+/* ---- Rows -------------------------------------------------------------- */
+.row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 30px;
+  padding: 3px 0;
+}
+.row .label { flex: 1; color: var(--ink); }
+.row .sub { display: block; font-size: 11px; color: var(--muted); margin-top: 1px; line-height: 1.35; }
+
+/* Toggle: a framed square that fills on check (no color, texture only) */
+.toggle { position: relative; display: inline-flex; align-items: center; cursor: pointer; }
+.toggle input { position: absolute; opacity: 0; width: 0; height: 0; }
+.toggle .box {
+  width: 34px; height: 18px; flex: none;
+  border: 1px solid var(--line-strong);
+  border-radius: 2px;
+  position: relative;
+  transition: border-color 140ms cubic-bezier(0.22,1,0.36,1), background 140ms;
+}
+.toggle .box::after {
+  content: '';
+  position: absolute; top: 2px; left: 2px;
+  width: 12px; height: 12px;
+  background: var(--faint);
+  border-radius: 1px;
+  transition: transform 180ms cubic-bezier(0.22,1,0.36,1), background 140ms;
+}
+.toggle input:checked + .box { border-color: var(--ink); background: rgba(255,255,255,0.06); }
+.toggle input:checked + .box::after { transform: translateX(16px); background: var(--ink); }
+.toggle input:focus-visible + .box { outline: 1px solid var(--ink); outline-offset: 2px; }
+
+/* Number input: mono, tabular, hairline-framed */
+input[type="number"], input[type="text"], textarea {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+  background: var(--bg);
+  border: 1px solid var(--line-strong);
+  border-radius: 2px;
+  padding: 5px 7px;
+  transition: border-color 140ms;
+}
+input[type="number"] { width: 62px; text-align: right; -moz-appearance: textfield; }
+input[type="number"]::-webkit-inner-spin-button { opacity: 0.28; margin-left: 3px; }
+input:focus, textarea:focus { outline: none; border-color: var(--ink); }
+input::placeholder, textarea::placeholder { color: var(--faint); }
+.unit { font-family: var(--mono); font-size: 11px; color: var(--muted); min-width: 10px; }
+
+/* Number row: label left, framed input right */
+.numrow { justify-content: space-between; }
+.numrow .field { display: flex; align-items: center; gap: 6px; flex: none; }
+
+/* ---- Meme badges (texture chips) --------------------------------------- */
+.badge-row { display: flex; flex-wrap: wrap; gap: 5px; }
+.badge-row label {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.02em;
+  border: 1px solid var(--line-strong);
+  border-radius: 2px;
+  padding: 3px 9px;
+  cursor: pointer;
+  color: var(--muted);
+  transition: all 140ms;
+  user-select: none;
+}
+.badge-row label.on {
+  border-color: var(--ink);
+  color: var(--ink);
+  background: rgba(255,255,255,0.06);
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
+
+textarea {
+  width: 100%;
+  height: 58px;
+  resize: vertical;
+  line-height: 1.5;
+}
+
+/* ---- Overrides list ---------------------------------------------------- */
+#overrides .ov-row {
+  display: flex; justify-content: space-between; align-items: center;
+  font-family: var(--mono); font-size: 11px; padding: 3px 0;
+  border-top: 1px dotted var(--line);
+}
+#overrides .ov-row:first-child { border-top: none; }
+#overrides button {
+  font-family: var(--mono); font-size: 10px; letter-spacing: 0.08em;
+  background: none; border: none; color: var(--muted); cursor: pointer;
+  text-transform: uppercase;
+}
+#overrides button:hover { color: var(--ink); text-decoration: underline; }
+
+.hint { font-size: 11px; color: var(--muted); line-height: 1.4; margin-top: 4px; }
+.hint.mono { font-family: var(--mono); font-size: 10px; letter-spacing: 0.02em; }
+
+/* ---- Toast (Saved) ----------------------------------------------------- */
+#status {
+  position: fixed; left: 0; right: 0; bottom: 0;
+  z-index: var(--z-toast);
+  font-family: var(--mono); font-size: 10px; letter-spacing: 0.18em;
+  text-transform: uppercase; text-align: center;
+  padding: 7px; color: var(--bg); background: var(--ink);
+  transform: translateY(100%);
+  transition: transform 220ms cubic-bezier(0.22,1,0.36,1);
+}
+#status.show { transform: translateY(0); }
+
+/* ---- Footer plate line ------------------------------------------------- */
+.colophon {
+  padding: 11px 18px 14px;
+  display: flex; justify-content: space-between;
+  font-family: var(--mono); font-size: 9px; letter-spacing: 0.14em;
+  color: var(--faint); text-transform: uppercase;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; }
+}

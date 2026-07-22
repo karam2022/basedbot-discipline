@@ -2,400 +2,82 @@
 <html>
 <head>
   <meta charset="utf-8" />
-  <style>
-    :root {
-      --bg: #0a0e17;
-      --card: rgba(255, 255, 255, 0.028);
-      --card-solid: #121926;
-      --border: rgba(255, 255, 255, 0.08);
-      --border-strong: rgba(255, 255, 255, 0.14);
-      --text: #e6e9ef;
-      --muted: #8a94a6;
-      --faint: #5b6577;
-      --accent: #22c55e;
-      --accent-dim: #16a34a;
-      --danger: #ef4444;
-      --field: #0e1420;
-    }
-    * { box-sizing: border-box; }
-    body {
-      width: 340px;
-      margin: 0;
-      padding: 0 16px 18px;
-      background:
-        radial-gradient(120% 60% at 50% -10%, rgba(34, 197, 94, 0.10), transparent 60%),
-        var(--bg);
-      color: var(--text);
-      font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-      -webkit-font-smoothing: antialiased;
-    }
-
-    /* Header */
-    header {
-      display: flex;
-      align-items: center;
-      gap: 11px;
-      padding: 16px 2px 14px;
-      position: sticky;
-      top: 0;
-      background: linear-gradient(var(--bg) 78%, transparent);
-      z-index: 5;
-    }
-    .logo {
-      width: 38px; height: 38px;
-      object-fit: contain;
-      border-radius: 10px;
-      padding: 3px;
-      background: rgba(255, 255, 255, 0.04);
-      border: 1px solid var(--border);
-    }
-    .brand-name { font-size: 14px; font-weight: 650; letter-spacing: -0.01em; }
-    .brand-sub { font-size: 11px; color: var(--muted); margin-top: 1px; }
-
-    /* Cards & sections */
-    .card {
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: 13px;
-      padding: 4px 14px;
-      margin-bottom: 11px;
-    }
-    .section-title {
-      font-size: 10.5px;
-      text-transform: uppercase;
-      letter-spacing: 0.07em;
-      color: var(--faint);
-      font-weight: 650;
-      margin: 16px 4px 7px;
-    }
-
-    /* Toggle rows */
-    .row {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-      padding: 10px 0;
-      margin: 0;
-      border-bottom: 1px solid var(--border);
-    }
-    .card .row:last-child { border-bottom: none; }
-    .row-text { min-width: 0; }
-    .row-label { font-size: 13px; color: var(--text); }
-    .row-hint { font-size: 11px; color: var(--muted); margin-top: 2px; line-height: 1.35; }
-
-    /* iOS-style switch (styled checkbox — id preserved for popup.js) */
-    .switch {
-      appearance: none; -webkit-appearance: none;
-      position: relative; flex: none;
-      width: 36px; height: 21px;
-      border-radius: 999px;
-      background: #2a3446;
-      cursor: pointer;
-      transition: background 0.18s ease;
-    }
-    .switch::after {
-      content: ''; position: absolute; top: 2px; left: 2px;
-      width: 17px; height: 17px; border-radius: 50%;
-      background: #e5e7eb;
-      transition: transform 0.18s ease;
-      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
-    }
-    .switch:checked { background: var(--accent); }
-    .switch:checked::after { transform: translateX(15px); background: #06140b; }
-    .switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-
-    /* Journal stat card */
-    #journal { padding: 4px 0; }
-    #journal div {
-      display: flex; justify-content: space-between; align-items: baseline;
-      padding: 5px 0;
-      border-bottom: 1px solid var(--border);
-    }
-    #journal div:last-child { border-bottom: none; }
-    #journal div span:first-child { color: var(--muted); font-size: 12px; }
-    #journal div span:last-child {
-      color: var(--text); font-weight: 600;
-      font-variant-numeric: tabular-nums;
-    }
-    #health { padding: 4px 0; }
-    #health div {
-      display: flex; justify-content: space-between; gap: 12px;
-      padding: 5px 0; border-bottom: 1px solid var(--border);
-    }
-    #health div:last-child { border-bottom: none; }
-    #health span:first-child { color: var(--muted); font-size: 12px; }
-    #health span:last-child { font-weight: 600; text-align: right; }
-
-    /* Inputs */
-    input[type="number"], input[type="text"], input[type="password"] {
-      background: var(--field);
-      color: var(--text);
-      border: 1px solid var(--border-strong);
-      border-radius: 8px;
-      padding: 6px 9px;
-      font: 13px system-ui, sans-serif;
-    }
-    input[type="number"] { width: 62px; text-align: right; }
-    input:focus { outline: none; border-color: var(--accent); }
-    input::placeholder { color: var(--faint); }
-    textarea {
-      width: 100%; height: 62px;
-      background: var(--field); color: var(--text);
-      border: 1px solid var(--border-strong); border-radius: 8px;
-      padding: 8px; box-sizing: border-box;
-      font: 12px/1.5 ui-monospace, monospace;
-      resize: vertical;
-    }
-    .field-row {
-      display: flex; align-items: center; justify-content: space-between;
-      gap: 12px; padding: 9px 0;
-      border-bottom: 1px solid var(--border);
-    }
-    .card .field-row:last-child { border-bottom: none; }
-    .field-row label { font-size: 13px; }
-    .stack { display: block; padding: 10px 0; }
-    .stack > label { display: block; font-size: 13px; margin-bottom: 6px; }
-
-    /* Badge chips */
-    .badge-row { display: flex; flex-wrap: wrap; gap: 5px; padding: 10px 0 12px; }
-    .badge-row label {
-      background: var(--field);
-      border: 1px solid var(--border-strong);
-      border-radius: 999px;
-      padding: 3px 11px;
-      margin: 0; cursor: pointer;
-      font-size: 12px; color: var(--muted);
-      transition: all 0.12s ease;
-    }
-    .badge-row label.on { border-color: var(--danger); color: #fca5a5; background: rgba(239, 68, 68, 0.08); }
-
-    /* Overrides list */
-    #overrides div { display: flex; justify-content: space-between; align-items: center; padding: 4px 0; }
-    #overrides button {
-      background: none; border: none; color: var(--danger);
-      cursor: pointer; font-size: 12px; padding: 2px 4px;
-    }
-
-    /* Advanced (progressive disclosure) */
-    details.advanced {
-      border: 1px solid var(--border);
-      border-radius: 13px;
-      background: var(--card);
-      overflow: hidden;
-      margin-bottom: 11px;
-    }
-    details.advanced > summary {
-      list-style: none; cursor: pointer;
-      padding: 12px 14px;
-      font-size: 12.5px; font-weight: 600; color: var(--text);
-      display: flex; align-items: center; justify-content: space-between;
-    }
-    details.advanced > summary::-webkit-details-marker { display: none; }
-    details.advanced > summary::after {
-      content: '⌄'; color: var(--muted); font-size: 15px;
-      transition: transform 0.2s ease;
-    }
-    details.advanced[open] > summary::after { transform: rotate(180deg); }
-    .advanced-body { padding: 0 14px 6px; }
-    .sub-title {
-      font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.06em;
-      color: var(--faint); font-weight: 650; margin: 12px 0 2px;
-    }
-
-    .hint { color: var(--muted); font-size: 11px; line-height: 1.4; }
-    .link-btn {
-      background: none; border: none; color: var(--faint); cursor: pointer;
-      font: 11px system-ui, sans-serif;
-    }
-    .link-btn:hover { color: var(--danger); }
-    .action-btn {
-      border: 1px solid var(--border-strong); border-radius: 8px;
-      padding: 6px 10px; background: var(--field); color: var(--text);
-      font: 600 11px system-ui, sans-serif; cursor: pointer;
-    }
-    .action-btn:hover { border-color: var(--accent); }
-    .action-btn:disabled { opacity: .55; cursor: default; }
-    .button-row { display: flex; gap: 7px; padding: 10px 0; }
-    .secret-wrap { display: flex; align-items: center; gap: 5px; }
-    .card-head {
-      display: flex; align-items: center; justify-content: space-between;
-      padding: 11px 0 3px;
-    }
-    .card-head .section-title { margin: 0; }
-
-    #status {
-      position: sticky; bottom: 0;
-      color: var(--accent); height: 18px; font-size: 12px; font-weight: 600;
-      text-align: center; padding-top: 6px;
-      background: linear-gradient(transparent, var(--bg) 60%);
-    }
-    #status.error { color: var(--danger); }
-  </style>
+  <link rel="stylesheet" href="popup.css" />
 </head>
 <body>
-  <header>
-    <img class="logo" src="icons/icon128.png" alt="BasedBot Discipline" />
-    <div>
-      <div class="brand-name">BasedBot Discipline</div>
-      <div class="brand-sub">Filter the noise. Take profit. Cut losers.</div>
-    </div>
+  <header class="masthead">
+    <div class="eyebrow">Discipline · Control Plane</div>
+    <h1>BasedBot<br>Discipline</h1>
+    <div class="plate" id="plate">v0.0</div>
   </header>
 
-  <div class="section-title">Feed</div>
-  <div class="card">
-    <label class="row">
-      <span class="row-text"><span class="row-label">Hide meme coins</span></span>
-      <input type="checkbox" id="filterEnabled" class="switch" />
-    </label>
-    <label class="row">
-      <span class="row-text"><span class="row-label">Safety readout on cards</span>
-        <span class="row-hint">🛡 pass/fail score in each card corner</span></span>
-      <input type="checkbox" id="cardIntelEnabled" class="switch" />
-    </label>
-    <label class="row">
-      <span class="row-text"><span class="row-label">Best-guess highlight</span>
-        <span class="row-hint">🔥 cards passing every safety metric</span></span>
-      <input type="checkbox" id="hotEnabled" class="switch" />
-    </label>
-    <label class="row">
-      <span class="row-text"><span class="row-label">Flag repeat-offender devs</span>
-        <span class="row-hint">⚠️ serial launchers &amp; past ruggers</span></span>
-      <input type="checkbox" id="creatorGuardEnabled" class="switch" />
-    </label>
-    <label class="row">
-      <span class="row-text"><span class="row-label">Flag risky contracts</span>
-        <span class="row-hint">⛔ owner can drain liquidity / hidden fees</span></span>
-      <input type="checkbox" id="auditGuardEnabled" class="switch" />
-    </label>
+  <section class="section">
+    <div class="eyebrow">Feed</div>
+    <div id="feedToggles"></div>
+  </section>
+
+  <section class="section">
+    <div class="eyebrow">Safety hide rules</div>
+    <div id="hideRules"></div>
+    <div class="row numrow" style="margin-top:6px">
+      <span class="label">🛡 Flag buy/sell tax over
+        <span class="sub">Token page only — tax isn't on the feed</span></span>
+      <span class="field"><input type="number" id="maxTaxPct" min="0" max="100" /><span class="unit">%</span></span>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="eyebrow">Best-guess gates · 🔥</div>
+    <div class="hint" style="margin:-4px 0 10px">A token earns 🔥 only if it clears every gate below.</div>
+    <div id="hotGates"></div>
+  </section>
+
+  <section class="section">
+    <div class="eyebrow">Utility score</div>
+    <div id="scoreFields"></div>
+    <div class="hint">Score = launchpad (meme pad −3, Virtual +1) + socials (GitHub/MCP +4,
+      Docs +3, Website/Discord/Medium/YouTube +1) − meme keywords (−3).</div>
+  </section>
+
+  <section class="section">
+    <div class="eyebrow">Take-profit</div>
+    <div id="tpToggles"></div>
+    <div id="tpFields" style="margin-top:4px"></div>
+  </section>
+
+  <section class="section">
+    <div class="eyebrow">Telegram</div>
+    <div id="tgToggles"></div>
+    <div class="row"><span class="label">Bot token</span>
+      <input type="text" id="tgToken" style="width:150px" placeholder="123456:ABC…" /></div>
+    <div class="row"><span class="label">Chat ID</span>
+      <input type="text" id="tgChatId" style="width:110px" placeholder="auto-detects" /></div>
+    <div class="hint">@BotFather → token, message the bot once → chat ID auto-fills.
+      🔥 alerts go only here; take-profit goes here + Chrome.</div>
+  </section>
+
+  <section class="section">
+    <div class="eyebrow">Meme launchpads</div>
+    <div class="badge-row" id="badges"></div>
+  </section>
+
+  <section class="section">
+    <div class="eyebrow">Meme keywords</div>
+    <textarea id="memeKeywords" spellcheck="false"></textarea>
+    <div class="hint">Comma-separated, matched against name + ticker.</div>
+  </section>
+
+  <section class="section">
+    <div class="eyebrow">Your overrides</div>
+    <div id="overrides"></div>
+  </section>
+
+  <div class="colophon">
+    <span>Polkadot · Second Age</span>
+    <span id="coloRight">Plate · Discipline</span>
   </div>
-
-  <div class="section-title">Positions</div>
-  <div class="card">
-    <label class="row">
-      <span class="row-text"><span class="row-label">Take-profit reminders</span></span>
-      <input type="checkbox" id="reminderEnabled" class="switch" />
-    </label>
-    <label class="row">
-      <span class="row-text"><span class="row-label">Stop-loss nag</span>
-        <span class="row-hint">🔴 cut losers, not just take winners</span></span>
-      <input type="checkbox" id="stopLossEnabled" class="switch" />
-    </label>
-    <label class="row">
-      <span class="row-text"><span class="row-label">Peak give-back warning</span>
-        <span class="row-hint">🟠 protect a winner that falls from its peak</span></span>
-      <input type="checkbox" id="peakGivebackEnabled" class="switch" />
-    </label>
-    <label class="row">
-      <span class="row-text"><span class="row-label">Anti-FOMO guards</span>
-        <span class="row-hint">🛑 daily loss limit + revenge-buy warning</span></span>
-      <input type="checkbox" id="fomoGuardEnabled" class="switch" />
-    </label>
-    <label class="row">
-      <span class="row-text"><span class="row-label">Dump alerts</span>
-        <span class="row-hint">🚨 dev or whale sells a token you hold</span></span>
-      <input type="checkbox" id="dumpAlertsEnabled" class="switch" />
-    </label>
-    <label class="row">
-      <span class="row-text"><span class="row-label">Trade journal</span></span>
-      <input type="checkbox" id="journalEnabled" class="switch" />
-    </label>
-  </div>
-
-  <div class="card">
-    <div class="card-head">
-      <span class="section-title">Journal</span>
-      <span>
-        <button id="exportJournal" type="button" class="link-btn">export</button>
-        <button id="clearJournal" type="button" class="link-btn">clear</button>
-      </span>
-    </div>
-    <div id="journal"><span class="hint">No closed trades yet.</span></div>
-  </div>
-
-  <div class="card">
-    <div class="card-head"><span class="section-title">Data health</span></div>
-    <div id="health"><span class="hint">Waiting for BasedBot data…</span></div>
-  </div>
-
-  <div class="section-title">Alerts</div>
-  <div class="card">
-    <label class="row">
-      <span class="row-text"><span class="row-label">Chrome notifications</span></span>
-      <input type="checkbox" id="notifyEnabled" class="switch" />
-    </label>
-    <label class="row">
-      <span class="row-text"><span class="row-label">🔥/💎 Discovery alerts (this laptop)</span>
-        <span class="row-hint">off if a VPS watcher already covers you</span></span>
-      <input type="checkbox" id="laptopHotAlerts" class="switch" />
-    </label>
-    <div class="field-row">
-      <label for="tgToken">Bot token</label>
-      <span class="secret-wrap">
-        <input type="password" id="tgToken" style="width:128px" placeholder="123456:ABC…" />
-        <button id="toggleToken" type="button" class="action-btn" aria-label="Show bot token">show</button>
-      </span>
-    </div>
-    <div class="field-row">
-      <label for="tgChatId">Chat ID</label>
-      <input type="text" id="tgChatId" style="width:110px" placeholder="123456789" />
-    </div>
-    <div class="stack">
-      <span class="hint">Create a bot with @BotFather, get your ID from @userinfobot,
-      then message your bot once.</span>
-    </div>
-    <div class="button-row">
-      <button id="testTelegram" type="button" class="action-btn">Send test alert</button>
-    </div>
-  </div>
-
-  <details class="advanced">
-    <summary>Advanced settings</summary>
-    <div class="advanced-body">
-      <div class="sub-title">Quick preset</div>
-      <div class="button-row">
-        <button id="presetConservative" type="button" class="action-btn">Conservative</button>
-        <button id="presetBalanced" type="button" class="action-btn">Balanced</button>
-      </div>
-      <div class="sub-title">Take-profit &amp; stop-loss</div>
-      <div class="field-row"><label>Remind when up %</label><input type="number" id="thresholdPct" min="1" max="1000" /></div>
-      <div class="field-row"><label>Nag when down %</label><input type="number" id="stopLossPct" min="1" max="100" /></div>
-      <div class="field-row"><label>Warn after giving back points</label><input type="number" id="peakGivebackPct" min="1" max="1000" /></div>
-      <div class="field-row"><label>Snooze length (min)</label><input type="number" id="snoozeMin" min="1" max="240" /></div>
-
-      <div class="sub-title">Anti-FOMO</div>
-      <div class="field-row"><label>Stop-for-today after N losses</label><input type="number" id="dailyLossLimit" min="1" max="50" /></div>
-      <div class="field-row"><label>Revenge toast duration (sec)</label><input type="number" id="revengeToastSec" min="3" max="60" /></div>
-
-      <div class="sub-title">Dump alerts</div>
-      <div class="field-row"><label>Whale sell alert over $</label><input type="number" id="whaleSellUsd" min="1" max="1000000" /></div>
-      <div class="field-row"><label>…and over % of liquidity</label><input type="number" id="whaleSellLiquidityPct" min="0.1" max="100" step="0.1" /></div>
-
-      <div class="sub-title">Utility score</div>
-      <div class="field-row"><label>Hide below score</label><input type="number" id="minScore" min="-10" max="10" /></div>
-      <div class="field-row"><label>Flag 💎 gem at score ≥</label><input type="number" id="gemMinScore" min="0" max="20" /></div>
-
-      <div class="sub-title">Creator guard</div>
-      <div class="field-row"><label>Flag dev after N launches</label><input type="number" id="creatorMaxLaunches" min="1" max="100" /></div>
-      <div class="field-row"><label>…or after N rugs</label><input type="number" id="creatorMaxRugs" min="1" max="100" /></div>
-
-      <div class="sub-title">Meme keywords</div>
-      <div class="stack">
-        <textarea id="memeKeywords" spellcheck="false"></textarea>
-        <span class="hint">Comma-separated, matched against name + ticker.</span>
-      </div>
-
-      <div class="sub-title">Meme launchpad badges to hide</div>
-      <div class="badge-row" id="badges"></div>
-
-      <div class="sub-title">Your overrides</div>
-      <div id="overrides"><span class="hint">None yet.</span></div>
-    </div>
-  </details>
 
   <div id="status"></div>
-
-  <script src="src/constants.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

@@ -129,6 +129,15 @@ BBD.filter = (() => {
     if (info.addr && BBD.isHeld(positions, info.addr)) return positive; // held: never hide
     if (info.addr && overrides[info.addr] === 'show') return positive;
     if (info.addr && overrides[info.addr] === 'hide') return 'hide';
+    // Per-metric hard hide rules: any enabled metric over its limit is a
+    // rug-risk hide that beats utility and gem status. Only fires when we have
+    // the stat; unknown never hides. (🔥 can't reach here — gated much lower.)
+    if (stats && BBD.HIDE_METRICS.some((m) =>
+      settings[`hide_${m.key}_on`] &&
+      typeof stats[m.stat] === 'number' &&
+      stats[m.stat] > settings[`hide_${m.key}_max`])) {
+      return 'hide';
+    }
     if (hot || gem) return positive;
     // Meme-named tokens hide regardless; anything with a real web presence
     // never hides — utility is shown and risk-ranked, not censored.

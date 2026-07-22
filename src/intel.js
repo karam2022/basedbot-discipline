@@ -57,8 +57,18 @@ BBD.intel = (() => {
       holders: countNum(raw['Holders']),
       proTraders: countNum(raw['Pro Traders']),
       dexPaid: raw['Dex Paid'] === 'Paid',
+      ...parseTax(),
       ts: Date.now()
     };
+  };
+
+  // Buy/sell tax lives only on the token page as "Tax B/S  10/10%" (not on the
+  // feed). Returns { buyTax, sellTax } as numbers, or nulls if absent.
+  const parseTax = () => {
+    const m = document.body.innerText.match(/Tax\s*B\/S\s*([\d.]+)\s*\/\s*([\d.]+)\s*%/i);
+    return m
+      ? { buyTax: Number(m[1]), sellTax: Number(m[2]) }
+      : { buyTax: null, sellTax: null };
   };
 
   // Each check: [name, pass|null]. null = unknown, doesn't count against.
@@ -72,7 +82,9 @@ BBD.intel = (() => {
     ['LP burned/locked', (m.lpBurned === null && m.lpLocked === null)
       ? null : (m.lpBurned >= 50 || m.lpLocked >= 50)],
     ['Renounced', m.renounced],
-    ['Holders ≥100', m.holders === null ? null : m.holders >= settings.hotMinHolders]
+    ['Holders ≥100', m.holders === null ? null : m.holders >= settings.hotMinHolders],
+    [`Tax ≤${settings.maxTaxPct}%`, (m.buyTax === null && m.sellTax === null)
+      ? null : (Math.max(m.buyTax || 0, m.sellTax || 0) <= settings.maxTaxPct)]
   ];
 
   // One-line summary of the creator's track record, or '' when there's nothing
