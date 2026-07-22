@@ -11,7 +11,7 @@
   const shutdown = () => {
     intervals.forEach(clearInterval);
     observer.disconnect();
-    ['bbd-filter-chip', 'bbd-banner', 'bbd-refresh', 'bbd-intel']
+    ['bbd-filter-chip', 'bbd-banner', 'bbd-refresh', 'bbd-intel', 'bbd-fomo', 'bbd-guard-revenge']
       .forEach((id) => document.getElementById(id)?.remove());
     document.querySelectorAll('.bbd-hidden, .bbd-gem, .bbd-hot, .bbd-baddev, .bbd-override, .bbd-cardintel')
       .forEach((el) => {
@@ -32,6 +32,7 @@
     BBD.pnl.scan();
     BBD.intel.scan();
     BBD.banner.tick();
+    BBD.guard.tick();
   };
 
   // Manual refresh button: forces a full re-scan on demand.
@@ -76,12 +77,13 @@
     }
   }), BBD.ROUTE_POLL_MS));
 
-  // Regular PnL + intel + banner refresh.
+  // Regular PnL + intel + banner + guard refresh.
   intervals.push(setInterval(guard(() => {
     ensureRefreshBtn();
     BBD.pnl.scan();
     BBD.intel.scan();
     BBD.banner.tick();
+    BBD.guard.tick();
   }), BBD.POLL_MS));
 
   // React immediately when settings change from the popup.

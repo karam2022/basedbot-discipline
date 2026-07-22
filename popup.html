@@ -46,12 +46,19 @@
   <label><input type="checkbox" id="reminderEnabled" /> Take-profit reminders</label>
   <label><input type="checkbox" id="stopLossEnabled" /> 🔴 Stop-loss nag (cut losers too)</label>
   <label><input type="checkbox" id="journalEnabled" /> 📓 Trade journal</label>
+  <label><input type="checkbox" id="fomoGuardEnabled" /> 🛑 Anti-FOMO guards</label>
   <label><input type="checkbox" id="notifyEnabled" /> Chrome notifications</label>
 
   <h2>Sell reminder</h2>
   <label>Remind when up <input type="number" id="thresholdPct" min="1" max="1000" /> %</label>
   <label>Nag when down <input type="number" id="stopLossPct" min="1" max="100" /> %</label>
   <label>Snooze length <input type="number" id="snoozeMin" min="1" max="240" /> min</label>
+
+  <h2>Anti-FOMO</h2>
+  <label>Stop-for-today after <input type="number" id="dailyLossLimit" min="1" max="50" /> losses</label>
+  <div class="hint">Counts losing trades closed today (from the journal) and shows a
+  “step away” overlay at the limit. Also warns when you rebuy a token you sold at
+  a loss in the last hour.</div>
 
   <h2>Utility score</h2>
   <label>Hide tokens scoring below <input type="number" id="minScore" min="-10" max="10" /></label>

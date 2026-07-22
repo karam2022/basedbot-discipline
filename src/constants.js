@@ -17,6 +17,12 @@ BBD.DEFAULT_SETTINGS = Object.freeze({
   // Trade journal: log every position's entry safety snapshot, peak, and
   // realized exit so the popup can show win rate and profit given back.
   journalEnabled: true,
+  // Anti-FOMO guards (driven by the journal): a daily losing-trade limit that
+  // shows a "step away" overlay, and a revenge-trade warning when you reopen a
+  // token you just closed at a loss.
+  fomoGuardEnabled: true,
+  dailyLossLimit: 3,
+  revengeWindowMin: 60,
   // Utility-score thresholds: hide below minScore, flag gems at gemMinScore.
   minScore: 2,
   gemMinScore: 4,
@@ -68,7 +74,8 @@ BBD.KEYS = Object.freeze({
   intel: 'intel',         // { [addr]: parsed Token Info metrics + ts }
   alerted: 'alerted',     // { [addr]: ts } — 🔥 telegram dedupe, 24h TTL
   creators: 'creators',   // { [creatorAddr]: { tokens: { [addr]: {...} }, ts } }
-  journal: 'journal'      // { [addr]: { symbol, openTs, closeTs, entryVerdict, peakPct, exitPct, status } }
+  journal: 'journal',     // { [addr]: { symbol, openTs, closeTs, entryVerdict, peakPct, exitPct, status } }
+  daystats: 'daystats'    // { lossDismissedDay: 'YYYY-MM-DD' } — per-day guard dismissals
 });
 
 // Score penalty for a card whose creator is a flagged serial launcher/rugger.

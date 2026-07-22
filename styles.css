@@ -190,6 +190,55 @@ a[href*="/token/"]:hover .bbd-override,
   border: 1px solid #ef4444;
 }
 
+/* Daily loss-limit overlay: a prominent, dismissible "step away" card. */
+#bbd-fomo {
+  position: fixed;
+  top: 72px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2147483002;
+  display: none;
+  align-items: center;
+  gap: 14px;
+  max-width: 92vw;
+  padding: 12px 18px;
+  background: linear-gradient(90deg, #450a0a, #7f1d1d, #450a0a);
+  border: 2px solid #ef4444;
+  border-radius: 12px;
+  color: #fee2e2;
+  font: 700 14px/1.4 system-ui, sans-serif;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.55);
+}
+#bbd-fomo button {
+  background: #b91c1c;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 5px 12px;
+  font: 600 12px/1.6 system-ui, sans-serif;
+  cursor: pointer;
+  white-space: nowrap;
+}
+#bbd-fomo button:hover { background: #991b1b; }
+
+/* Revenge-trade advisory on a token page you recently sold at a loss. */
+#bbd-guard-revenge {
+  position: fixed;
+  top: 128px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2147483000;
+  display: none;
+  max-width: 80vw;
+  padding: 8px 16px;
+  background: #292112;
+  border: 1px solid #f59e0b;
+  border-radius: 999px;
+  color: #fcd34d;
+  font: 600 12px/1.4 system-ui, sans-serif;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.45);
+}
+
 /* Take-profit banner */
 #bbd-banner {
   position: fixed;

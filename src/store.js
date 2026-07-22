@@ -87,6 +87,11 @@ BBD.store = {
     if (Object.keys(liveSnoozes).length !== Object.keys(snoozes).length) {
       await this.set(BBD.KEYS.snoozes, liveSnoozes);
     }
+    // daystats holds only the current day's guard dismissals — drop yesterday's
+    const daystats = await this.get(BBD.KEYS.daystats, {});
+    if (daystats.lossDismissedDay && daystats.lossDismissedDay !== new Date().toISOString().slice(0, 10)) {
+      await this.set(BBD.KEYS.daystats, {});
+    }
     // dismissed entries only matter while the position is still held
     const [dismissed, positions] = await Promise.all([
       this.get(BBD.KEYS.dismissed, {}),
