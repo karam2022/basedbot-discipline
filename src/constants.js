@@ -28,6 +28,7 @@ BBD.DEFAULT_SETTINGS = Object.freeze({
   fomoGuardEnabled: true,
   dailyLossLimit: 3,
   revengeWindowMin: 60,
+  revengeToastSec: 10,
   // A close is only classified as win/loss when the last PnL sample was fresh.
   // Older samples are kept as estimates, but never drive revenge/loss guards.
   exitSampleMaxAgeSec: 60,

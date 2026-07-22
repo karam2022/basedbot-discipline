@@ -102,8 +102,9 @@ Older v1 journal exits did not contain sample timestamps, so they are migrated
 as “closed without fresh exit” instead of being trusted as wins or losses.
 
 The revenge warning appears only if the token is actually held again after a
-recent tracked loss. It has a **Dismiss** button. Merely viewing a token after
-selling it never triggers the warning.
+recent tracked loss. It appears as a compact top-right toast, auto-hides after
+10 seconds, and has a **Dismiss** button. Merely viewing a token after selling
+it never triggers the warning.
 
 ### 📱 Telegram alerts (optional)
 

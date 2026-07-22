@@ -254,22 +254,24 @@ a[href*="/token/"]:hover .bbd-override,
 /* Revenge-trade advisory on a token page you recently sold at a loss. */
 #bbd-guard-revenge {
   position: fixed;
-  top: 128px;
-  left: 50%;
-  transform: translateX(-50%);
+  top: 82px;
+  right: 16px;
   z-index: 2147483000;
   display: none;
   align-items: center;
   gap: 10px;
-  max-width: 80vw;
-  padding: 8px 16px;
-  background: #292112;
+  width: min(380px, calc(100vw - 32px));
+  padding: 10px 12px;
+  background: rgba(41, 33, 18, 0.96);
   border: 1px solid #f59e0b;
-  border-radius: 999px;
+  border-radius: 10px;
   color: #fcd34d;
   font: 600 12px/1.4 system-ui, sans-serif;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(8px);
+  animation: bbd-toast-in 0.18s ease-out;
 }
+#bbd-guard-revenge span { flex: 1; }
 #bbd-guard-revenge button {
   flex: none;
   border: 0;
@@ -281,6 +283,17 @@ a[href*="/token/"]:hover .bbd-override,
   cursor: pointer;
 }
 #bbd-guard-revenge button:hover { background: #78350f; }
+@keyframes bbd-toast-in {
+  from { opacity: 0; transform: translateX(12px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+@media (max-width: 600px) {
+  #bbd-guard-revenge {
+    top: 70px;
+    right: 10px;
+    width: min(340px, calc(100vw - 20px));
+  }
+}
 
 /* Take-profit banner */
 #bbd-banner {

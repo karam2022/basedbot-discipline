@@ -168,12 +168,12 @@ const init = async () => {
     $(id).checked = Boolean(settings[id]);
     $(id).addEventListener('change', () => saveSettings({ [id]: $(id).checked }));
   }
-  for (const id of ['thresholdPct', 'snoozeMin', 'stopLossPct', 'peakGivebackPct', 'minScore', 'gemMinScore', 'creatorMaxLaunches', 'creatorMaxRugs', 'dailyLossLimit', 'whaleSellUsd', 'whaleSellLiquidityPct']) {
+  for (const id of ['thresholdPct', 'snoozeMin', 'stopLossPct', 'peakGivebackPct', 'minScore', 'gemMinScore', 'creatorMaxLaunches', 'creatorMaxRugs', 'dailyLossLimit', 'revengeToastSec', 'whaleSellUsd', 'whaleSellLiquidityPct']) {
     $(id).value = settings[id];
     $(id).addEventListener('change', () => {
       const value = Number($(id).value);
       // These floor at 1; the rest may go to/through zero (or negative, minScore).
-      const mustBePositive = ['thresholdPct', 'snoozeMin', 'stopLossPct', 'peakGivebackPct', 'creatorMaxLaunches', 'creatorMaxRugs', 'dailyLossLimit', 'whaleSellUsd', 'whaleSellLiquidityPct'].includes(id);
+      const mustBePositive = ['thresholdPct', 'snoozeMin', 'stopLossPct', 'peakGivebackPct', 'creatorMaxLaunches', 'creatorMaxRugs', 'dailyLossLimit', 'revengeToastSec', 'whaleSellUsd', 'whaleSellLiquidityPct'].includes(id);
       // gemMinScore floor: 0 would mark every visible token a gem (#7).
       if (id === 'gemMinScore' && value < 1) return;
       if (!$(id).checkValidity()) {
@@ -255,6 +255,7 @@ const init = async () => {
     stopLossPct: 15,
     peakGivebackPct: 10,
     dailyLossLimit: 2,
+    revengeToastSec: 12,
     whaleSellUsd: 200,
     whaleSellLiquidityPct: 1,
     minScore: 3,
@@ -267,6 +268,7 @@ const init = async () => {
     stopLossPct: BBD.DEFAULT_SETTINGS.stopLossPct,
     peakGivebackPct: BBD.DEFAULT_SETTINGS.peakGivebackPct,
     dailyLossLimit: BBD.DEFAULT_SETTINGS.dailyLossLimit,
+    revengeToastSec: BBD.DEFAULT_SETTINGS.revengeToastSec,
     whaleSellUsd: BBD.DEFAULT_SETTINGS.whaleSellUsd,
     whaleSellLiquidityPct: BBD.DEFAULT_SETTINGS.whaleSellLiquidityPct,
     minScore: BBD.DEFAULT_SETTINGS.minScore,

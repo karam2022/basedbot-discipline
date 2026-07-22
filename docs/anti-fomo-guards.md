@@ -18,7 +18,9 @@ On a token page, the guard finds the latest closed trade for that wallet/chain/
 token. It warns only when the token is currently held again and the last fresh
 exit estimate was negative within `revengeWindowMin` (default 60 minutes).
 Simply viewing a sold token does not warn. The advisory has a **Dismiss** button;
-its trade ID is stored in `guardDismissed` so it stays closed.
+its trade ID is stored in `guardDismissed` so it stays closed. Otherwise it is a
+small top-right toast that auto-hides after `revengeToastSec` (default 10 s) and
+does not reappear again during the same page session.
 
 ## Not included: position-size guard
 

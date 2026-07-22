@@ -2,6 +2,9 @@
 'use strict';
 
 BBD.guard = (() => {
+  const revengeShownThisSession = new Set();
+  let activeRevengeTradeId = null;
+  let revengeHideTimer = null;
   const dayStr = () => BBD.localDayKey();
   const startOfToday = () => { const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime(); };
 
@@ -60,9 +63,16 @@ BBD.guard = (() => {
   const hideRevenge = () => {
     const el = document.getElementById('bbd-guard-revenge');
     if (el && el.style.display !== 'none') el.style.display = 'none';
+    if (revengeHideTimer) clearTimeout(revengeHideTimer);
+    revengeHideTimer = null;
+    activeRevengeTradeId = null;
   };
 
-  const showRevenge = (entry) => {
+  const showRevenge = (entry, settings) => {
+    if (activeRevengeTradeId === entry.tradeId || revengeShownThisSession.has(entry.tradeId)) return;
+    if (revengeHideTimer) clearTimeout(revengeHideTimer);
+    revengeShownThisSession.add(entry.tradeId);
+    activeRevengeTradeId = entry.tradeId;
     let el = document.getElementById('bbd-guard-revenge');
     if (!el) {
       el = document.createElement('div');
@@ -86,6 +96,9 @@ BBD.guard = (() => {
     });
     el.append(msg, btn);
     el.style.display = 'flex';
+    revengeHideTimer = setTimeout(() => {
+      if (activeRevengeTradeId === entry.tradeId) hideRevenge();
+    }, Math.max(3, settings.revengeToastSec || 10) * 1000);
   };
 
   const tick = async () => {
@@ -113,7 +126,7 @@ BBD.guard = (() => {
         const addr = BBD.tokenAddrFromHref(location.pathname);
         const chain = (location.pathname.match(/^\/token\/([^/]+)\//) || [])[1];
         const entry = addr && warningFor(journal, positions, dismissed, addr, chain, settings);
-        if (entry) showRevenge(entry);
+        if (entry) showRevenge(entry, settings);
         else hideRevenge();
       } else {
         hideRevenge();
