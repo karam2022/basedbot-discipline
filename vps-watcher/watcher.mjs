@@ -20,6 +20,7 @@ const SEEN_PATH = join(ROOT, 'seen.json');
 const NAMES_PATH = join(ROOT, 'names.json');     // replica registry
 const TRACKED_PATH = join(ROOT, 'tracked.json'); // user-tracked tokens
 const OFFSET_PATH = join(ROOT, 'tg-offset.json');
+const WATCH_PATH = join(ROOT, 'watchwords.json'); // { word: { ts } }
 // Canonical hot-logic config, shared with the extension (memeBadges/keywords/
 // socialWeights/hotGates). Read here so the watcher can't drift from the
 // extension — test/config-sync.test.js fails if the JSON and constants diverge.
@@ -80,10 +81,13 @@ const tg = async (method, payload) => {
 };
 
 let tgFirehoseChatId = config.tgFirehoseChatId || '';
+let tgTrackingChatId = config.tgTrackingChatId || '';
 // dest: 'quality' (default, your main chat) or 'firehose' (high-volume tiers).
 // Without a firehose chat configured, everything goes to the main chat.
 const sendTelegram = async (text, buttons, dest = 'quality') => {
-  const chat = dest === 'firehose' && tgFirehoseChatId ? tgFirehoseChatId : tgChatId;
+  const chat = dest === 'firehose' && tgFirehoseChatId ? tgFirehoseChatId
+    : dest === 'tracking' && tgTrackingChatId ? tgTrackingChatId
+      : tgChatId;
   if (!TG_TOKEN || !chat) return false;
   const payload = { chat_id: chat, text, disable_web_page_preview: true };
   if (buttons) payload.reply_markup = { inline_keyboard: buttons };
@@ -103,6 +107,51 @@ const pollUpdates = async () => {
   for (const u of j.result) {
     off.offset = u.update_id + 1;
     const txt = (u.message && u.message.text || '').trim().toLowerCase();
+    if (u.message && u.message.chat && txt.startsWith('/')) {
+      const fromChat = String(u.message.chat.id);
+      // Commands only from bound chats — anyone can message a bot, and the
+      // watchlist must not be writable by strangers. (/firehose is exempt:
+      // binding a new chat is the one command that must work from anywhere.)
+      const bound = fromChat === String(tgChatId) || fromChat === String(tgFirehoseChatId);
+      // /firehose may come from a new (unbound) group, but only from the OWNER:
+      // in a private chat, chat id == user id, so tgChatId doubles as owner id.
+      const fromOwner = String(u.message.from && u.message.from.id) === String(tgChatId);
+      const cmd0 = txt.split(/\s+/)[0].split('@')[0];
+      const isBindCmd = cmd0 === '/firehose' || cmd0 === '/tracking';
+      if (!bound && !(isBindCmd && fromOwner)) continue;
+      const reply = (text) => tg('sendMessage', { chat_id: u.message.chat.id, text });
+      const [cmdRaw, ...args] = txt.split(/\s+/);
+      const cmd = cmdRaw.split('@')[0];
+      if (cmd === '/watch' && args.length) {
+        const words = loadJson(WATCH_PATH, {});
+        for (const w of args.slice(0, 10)) {
+          const key = w.replace(/[^a-z0-9]/g, '');
+          if (key.length >= 2 && key.length <= 30) words[key] = { ts: Date.now() };
+        }
+        saveJson(WATCH_PATH, words);
+        await reply(`🔔 Watching: ${Object.keys(words).join(', ')}\nI'll alert on ANY new listing whose name or symbol contains a watchword — including fakes launched before an official token, so verify each against the project's own socials.`);
+        continue;
+      }
+      if (cmd === '/unwatch' && args.length) {
+        const words = loadJson(WATCH_PATH, {});
+        for (const w of args) delete words[w.replace(/[^a-z0-9]/g, '')];
+        saveJson(WATCH_PATH, words);
+        await reply(`Watchlist now: ${Object.keys(words).join(', ') || '(empty)'}`);
+        continue;
+      }
+      if (cmd === '/watchlist') {
+        const words = loadJson(WATCH_PATH, {});
+        await reply(`🔔 Watchwords: ${Object.keys(words).join(', ') || '(none — add with /watch TOKEN)'}`);
+        continue;
+      }
+    }
+    if (u.message && u.message.chat && txt.split('@')[0] === '/tracking') {
+      tgTrackingChatId = String(u.message.chat.id);
+      saveJson(CONFIG_PATH, { ...config, tgChatId, tgFirehoseChatId, tgTrackingChatId });
+      await tg('sendMessage', { chat_id: tgTrackingChatId, text: '📍 This chat is now TRACKING — Track confirmations, ⚠️ exit warnings, and 🏁 auto-untracks land here.' });
+      console.log(`[watcher] tracking chat bound: ${tgTrackingChatId}`);
+      continue;
+    }
     if (u.message && u.message.chat && txt === '/firehose') {
       tgFirehoseChatId = String(u.message.chat.id);
       saveJson(CONFIG_PATH, { ...config, tgChatId, tgFirehoseChatId });
@@ -135,7 +184,7 @@ const handleCallback = async (cq) => {
     saveJson(TRACKED_PATH, tracked);
     console.log(`[watcher] tracking ${addr} on ${chain}`);
     await answer('📍 Tracking — exit watch armed');
-    await sendTelegram(`📍 Now tracking ${addr.slice(0, 10)}… on ${chain}. I'll warn you if holders bleed or the holder structure deteriorates. Auto-untracks in ${Math.round(TRACK_TTL_MS / 86400000)}d.`);
+    await sendTelegram(`📍 Now tracking ${addr.slice(0, 10)}… on ${chain}. I'll warn you if holders bleed or the holder structure deteriorates. Auto-untracks in ${Math.round(TRACK_TTL_MS / 86400000)}d.`, null, 'tracking');
   } else if (data === 'ign') {
     await answer('Ignored');
   }
@@ -367,7 +416,8 @@ const TIERS = {
   hot: { head: '🔥 Best guess', body: 'passes every safety metric with real utility signals.' },
   gem: { head: '💎 Possible gem', body: 'passes every safety metric, has a website, thinner proof — DYOR.' },
   band: { head: '🚀 Momentum', body: (c) => `entered the $${Math.round(BAND_MIN / 1000)}K–$${Math.round(BAND_MAX / 1000)}K band${hasKw(c.blob) ? ' (meme — you asked for these too)' : ''}.` },
-  fresh: { head: '🌱 New utility launch', body: 'brand-new, real web presence, not a name-replica. Stats may be raw — size accordingly.' }
+  fresh: { head: '🌱 New utility launch', body: 'brand-new, real web presence, not a name-replica. Stats may be raw — size accordingly.' },
+  watch: { head: '🔔 Watchword hit', body: (c) => `matches your watchword "${c.watchWord}". Official token may not be live yet — fakes launch first. Verify against the project's own socials before touching it.` }
 };
 
 const alertToken = async (chain, card, tier, extra = '', dest = 'quality') => {
@@ -428,7 +478,7 @@ const exitWatch = async () => {
     if (now - t.ts > TRACK_TTL_MS) {
       delete tracked[addr];
       dirty = true;
-      await sendTelegram(`🏁 Auto-untracked ${addr.slice(0, 10)}… (${t.chain}) after ${Math.round(TRACK_TTL_MS / 86400000)}d.`);
+      await sendTelegram(`🏁 Auto-untracked ${addr.slice(0, 10)}… (${t.chain}) after ${Math.round(TRACK_TTL_MS / 86400000)}d.`, null, 'tracking');
       continue;
     }
     (byChain[t.chain] = byChain[t.chain] || []).push(addr);
@@ -440,7 +490,7 @@ const exitWatch = async () => {
       if (!exitApiWarned) {
         exitApiWarned = true;
         console.error(`[watcher] metrics API returned ${res.error} — exit watch degraded`);
-        await sendTelegram(`⚠️ Exit watch: basedbot's metrics API refused the anonymous request (HTTP ${res.error}). Tracking still records, but deterioration alerts are degraded until this is resolved.`);
+        await sendTelegram(`⚠️ Exit watch: basedbot's metrics API refused the anonymous request (HTTP ${res.error}). Tracking still records, but deterioration alerts are degraded until this is resolved.`, null, 'tracking');
       }
       continue;
     }
@@ -478,7 +528,7 @@ const exitWatch = async () => {
       if (reasons.length) {
         t.lastExitAlert = now;
         await sendTelegram(
-          `⚠️ EXIT WATCH (${chain})\n${addr.slice(0, 12)}…\n${reasons.join('\n')}\nhttps://basedbot.app/token/${chain}/${addr}`);
+          `⚠️ EXIT WATCH (${chain})\n${addr.slice(0, 12)}…\n${reasons.join('\n')}\nhttps://basedbot.app/token/${chain}/${addr}`, null, 'tracking');
       }
     }
   }
@@ -547,6 +597,7 @@ const tick = async () => {
     await pollUpdates();
     const seen = loadJson(SEEN_PATH, {});
     const names = loadJson(NAMES_PATH, {});
+    const watchwords = loadJson(WATCH_PATH, {});
     for (const chain of CHAINS) {
       let result;
       try {
@@ -581,6 +632,15 @@ const tick = async () => {
 
         // tier decisions (a token can earn several over its life; dedupe per tier)
         const tiers = [];
+        const wnormS = normToken(card.symbol);
+        const wnormN = normToken(card.name);
+        for (const w of Object.keys(watchwords)) {
+          if ((wnormS && wnormS.includes(w)) || (wnormN && wnormN.includes(w))) {
+            card.watchWord = w.toUpperCase();
+            tiers.push('watch');
+            break;
+          }
+        }
         if (safe && !kw && score >= 2) tiers.push('hot');
         else if (safe && !kw && card.titles.includes('Website')) tiers.push('gem');
         if (mcUsd !== null && mcUsd >= BAND_MIN && mcUsd <= BAND_MAX) tiers.push('band');
@@ -622,8 +682,16 @@ const tick = async () => {
             }
             flags.push(`🔗 ${x.card.website}`);
             flags.push(peek.ok ? `«${peek.line}»` : '⚠️ website unreachable');
-            if (peek.ok && !domainMatchesToken(x.card.website, x.card.symbol, x.card.name)) {
-              flags.push('⚠️ domain unrelated to token name (borrowed link?)');
+            const borrowed = peek.ok && !domainMatchesToken(x.card.website, x.card.symbol, x.card.name);
+            const memeSite = peek.ok && /\bmeme|knowyourmeme|coincommunities|linktr\.ee\b/i.test(peek.line + ' ' + x.card.website);
+            if (borrowed) flags.push('⚠️ domain unrelated to token name (borrowed link?)');
+            // 🌱 means "plausibly THEIR real site": a borrowed link or a site
+            // that self-describes as meme infrastructure fails the tier.
+            if (x.tier === 'fresh' && (borrowed || memeSite)) {
+              seen[key] = { ts: Date.now(), skipped: borrowed ? 'borrowed-link' : 'meme-site' };
+              saveJson(SEEN_PATH, seen);
+              console.log(`[watcher] skipped fresh ${x.card.symbol}: ${borrowed ? 'borrowed link' : 'meme site'}`);
+              continue;
             }
           } else if (x.tier === 'fresh') {
             // metadata says no website after all — card [title] was misleading
@@ -646,7 +714,7 @@ const tick = async () => {
           const freshStrict = x.tier === 'fresh' && peek && peek.ok &&
             UTILITY_WORDS.test(peek.line) && txN >= 25;
           let dest = 'firehose';
-          if (x.tier === 'hot') dest = 'quality';
+          if (x.tier === 'hot' || x.tier === 'watch') dest = 'quality';
           else if (freshStrict) dest = 'quality';
           else if (x.tier === 'gem' && socialScore(x.card) >= 4) dest = 'quality';
           const crown = freshStrict ? ' 👑' : '';
