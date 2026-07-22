@@ -13,6 +13,8 @@ BBD.feed = (() => {
   const creator = new Map(); // addr -> creatorAddress (for the creator guard)
   const market = new Map();  // addr -> { liq, mcap, isLaunchpad, symbol, ts }
   const audit = new Map();   // addr -> { danger, critical, ownerRenounced, reasons, ts }
+  const balances = new Map(); // addr -> { symbol, pct, usd, chain, ts } (held positions)
+  let balancesSeen = false;
   let prices = {};           // { ETH: number, SOL: number, ... }
 
   // metadata/batch keys carry a chain suffix ("0x…-4663"); metrics keys don't.
@@ -180,6 +182,32 @@ BBD.feed = (() => {
     prune(audit);
   };
 
+  // Wallet holdings (/api/v1/balances): the authoritative position list with
+  // accurate unrealized PnL — pnl.js uses this over fragile DOM scraping. Each
+  // token: { token, symbol, valueUsd, pnl:{ relative(%), absolute($) }, pool }.
+  const takeBalances = (wallets) => {
+    if (!Array.isArray(wallets)) return;
+    const next = new Map();
+    for (const w of wallets) {
+      const toks = w && Array.isArray(w.tokens) ? w.tokens : [];
+      for (const t of toks) {
+        if (!t || !isAddr(t.token)) continue;
+        const rel = t.pnl && Number(t.pnl.relative);
+        const chainRaw = (t.pool && t.pool.chain) || t.network;
+        next.set(normAddr(t.token), {
+          symbol: typeof t.symbol === 'string' ? t.symbol : '',
+          pct: Number.isFinite(rel) ? rel : null,
+          usd: usd(t.valueUsd),
+          chain: typeof chainRaw === 'string' ? chainRaw.toLowerCase() : null,
+          ts: Date.now()
+        });
+      }
+    }
+    balances.clear();
+    for (const [k, v] of next) balances.set(k, v);
+    balancesSeen = true; // an empty holdings list is still authoritative (all sold)
+  };
+
   window.addEventListener('message', (ev) => {
     if (ev.source !== window || ev.origin !== location.origin) return;
     const msg = ev.data;
@@ -189,6 +217,7 @@ BBD.feed = (() => {
     else if (msg.kind === 'list') takeList(msg.data);
     else if (msg.kind === 'prices') takePrices(msg.data);
     else if (msg.kind === 'audit') takeAudit(msg.data);
+    else if (msg.kind === 'balances') takeBalances(msg.data);
   });
   // The load-time batches fired before this listener existed.
   window.postMessage({ __bbd: 'replay-request' }, location.origin);
@@ -207,6 +236,14 @@ BBD.feed = (() => {
   const auditFor = (addr) => (addr && audit.get(addr)) || null;
   const priceOf = (sym) => (sym && prices[sym]) || null;
   const ethPrice = () => prices.ETH || null;
+  // Held positions from the balances API. hasBalances() gates pnl.js switching
+  // off DOM scraping — until the app's first balances fetch is tapped, we can't
+  // tell "no positions" from "not loaded yet".
+  const heldPositions = () => [...balances.entries()].map(([addr, v]) => ({ addr, ...v }));
+  const hasBalances = () => balancesSeen;
 
-  return { statsFor, titlesFor, creatorFor, marketFor, auditFor, priceOf, ethPrice };
+  return {
+    statsFor, titlesFor, creatorFor, marketFor, auditFor, priceOf, ethPrice,
+    heldPositions, hasBalances
+  };
 })();

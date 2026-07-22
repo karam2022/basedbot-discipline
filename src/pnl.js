@@ -1,5 +1,7 @@
-// Position watcher: reads PnL from token pages and the portfolio positions
-// table, caches results in chrome.storage.local for the banner.
+// Position watcher: caches held positions + unrealized PnL in
+// chrome.storage.local for the banner. Primary source is the balances API
+// (BBD.feed, accurate + whole-wallet); token-page / portfolio-table DOM
+// scraping is the fallback until that first balances fetch is tapped.
 'use strict';
 
 BBD.pnl = (() => {
@@ -76,12 +78,37 @@ BBD.pnl = (() => {
     }
   };
 
+  // Authoritative source: the balances API gives the whole wallet with accurate
+  // unrealized PnL, so no column-index guessing. Reconcile the store to it —
+  // upsert every held token, clear anything no longer held (an empty holdings
+  // list means everything was sold). Routed through save/clearPosition so the
+  // journal lifecycle still fires.
+  const fmtUsd = (v) => (typeof v === 'number' ? `$${v < 1 ? v.toFixed(4) : v.toFixed(2)}` : null);
+  const scanBalances = async () => {
+    const held = BBD.feed.heldPositions();
+    const heldAddrs = new Set(held.map((h) => h.addr));
+    const positions = await BBD.store.get(BBD.KEYS.positions, {});
+    for (const addr of Object.keys(positions)) {
+      if (!heldAddrs.has(addr)) await clearPosition(addr);
+    }
+    for (const h of held) {
+      if (h.pct === null) continue;
+      await savePosition(h.addr, h.symbol, h.pct, fmtUsd(h.usd), h.chain);
+    }
+  };
+
   const scan = async () => {
     const settings = await BBD.store.settings();
     if (!settings.reminderEnabled) return;
     try {
-      if (location.pathname.includes('/token/')) await scanTokenPage();
-      if (location.pathname.startsWith('/portfolio')) await scanPortfolio();
+      if (BBD.feed.hasBalances()) {
+        // Balances tapped — authoritative for the whole wallet.
+        await scanBalances();
+      } else {
+        // Fallback until the app's first balances fetch is seen.
+        if (location.pathname.includes('/token/')) await scanTokenPage();
+        if (location.pathname.startsWith('/portfolio')) await scanPortfolio();
+      }
     } catch (err) {
       console.warn('[bbd] pnl scan failed', err);
     }

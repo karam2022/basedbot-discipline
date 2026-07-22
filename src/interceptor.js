@@ -11,9 +11,10 @@
   const WATCHED = [
     [/\/api\/tokens\/metrics\/batch$/, 'metrics'],
     [/\/api\/tokens\/metadata(\/batch)?$/, 'metadata'],
-    [/\/api\/tokens$/, 'list'],       // feed list: liquidity_usd, market_cap_usd per token
-    [/\/api\/prices$/, 'prices'],     // { success, prices: { ETH: number, ... } }
-    [/\/api\/audit\/batch$/, 'audit'] // streamed audit objects (contract + hook safety)
+    [/\/api\/tokens$/, 'list'],        // feed list: liquidity_usd, market_cap_usd per token
+    [/\/api\/prices$/, 'prices'],      // { success, prices: { ETH: number, ... } }
+    [/\/api\/audit\/batch$/, 'audit'], // streamed audit objects (contract + hook safety)
+    [/\/api\/v1\/balances$/, 'balances'] // wallet holdings + unrealized PnL per token
   ];
 
   // /api/audit/batch streams multiple JSON objects (NDJSON / concatenated),
