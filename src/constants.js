@@ -49,7 +49,11 @@ BBD.DEFAULT_SETTINGS = Object.freeze({
     'pepe', 'inu', 'doge', 'shib', 'wif', 'bonk', 'elon', 'trump', 'moon',
     'wojak', 'chad', 'frog', 'cat', 'dog', 'kitty', 'pup', 'baby', 'fart',
     'butt', 'cum', 'tendies', 'rug', 'ape', 'monke', 'gigachad', 'meme'
-  ]
+  ],
+  // Read only by the popup + background worker (from raw storage), but kept
+  // here so DEFAULT_SETTINGS is the single complete source of truth.
+  tgToken: '',
+  tgChatId: ''
 });
 
 // chrome.storage.local keys.
