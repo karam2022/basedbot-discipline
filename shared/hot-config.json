@@ -1,0 +1,35 @@
+{
+  "_comment": "Canonical hot-logic config. The VPS watcher (vps-watcher/watcher.mjs) reads this file at runtime and passes it into the page. The extension mirrors these values in src/constants.js (memeBadges, memeKeywords, ambiguousKeywords, hot gates) and src/score.js (socialWeights); test/config-sync.test.js fails if they drift. Edit here, then update constants.js/score.js to match.",
+  "socialWeights": {
+    "GitHub": 4,
+    "MCP": 4,
+    "Docs": 3,
+    "Medium": 1,
+    "YouTube": 1,
+    "Website": 1,
+    "Discord": 1,
+    "Telegram": 0,
+    "X": 0,
+    "Twitter": 0,
+    "Instagram": 0,
+    "Facebook": 0,
+    "Reddit": 0
+  },
+  "memeBadges": ["Pons", "bow.fun", "Flap", "Circus", "Charms", "Long.xyz", "Bankr", "Ape Store",
+    "Zora", "Clanker", "Flaunch", "Stroid", "Klik", "Trench", "Livo",
+    "Pump.fun", "PumpFun", "PumpSwap", "Bags", "Meteora DBC"],
+  "memeKeywords": ["pepe", "inu", "doge", "shib", "wif", "bonk", "elon", "trump", "moon",
+    "wojak", "chad", "frog", "cat", "dog", "kitty", "pup", "baby", "fart",
+    "butt", "cum", "tendies", "rug", "ape", "monke", "gigachad", "meme"],
+  "ambiguousKeywords": ["cat", "dog", "ape", "butt", "baby", "moon", "pup", "rug", "cum", "meme", "chad"],
+  "hotGates": {
+    "top10": 30,
+    "dev": 2,
+    "snipers": 15,
+    "bundlers": 15,
+    "insiders": 20,
+    "holders": 100,
+    "minProRatio": 0.05,
+    "maxProRatio": 0.6
+  }
+}

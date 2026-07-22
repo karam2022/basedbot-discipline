@@ -18,6 +18,6 @@ wallet session) — this covers discovery 24/7.
     journalctl -u basedbot-watcher -f    # watch it work
 
 ## Notes
-- seen.json dedupes alerts; a token re-alerts after realertHours (default 24h).
+- seen.json dedupes by chain + token; a token re-alerts after realertHours (default 24h).
 - Telegram creds: @BotFather -> token, @userinfobot -> chat id, message your bot once.
 - config.json holds the bot token: keep it on the VPS only, never commit it.

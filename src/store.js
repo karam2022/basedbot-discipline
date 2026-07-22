@@ -71,6 +71,15 @@ BBD.store = {
     await this.pruneMap(BBD.KEYS.intel, { maxAgeMs: 7 * DAY });
     await this.pruneMap(BBD.KEYS.positions, { maxAgeMs: 7 * DAY });
     await this.pruneMap(BBD.KEYS.alerted, { maxAgeMs: 3 * DAY, maxEntries: 1000 });
+    await this.pruneMap(BBD.KEYS.guardDismissed, { maxAgeMs: 2 * DAY, maxEntries: 1000 });
+    // Creator reputation is long-lived by design; keep 30 days and cap the map
+    // so a heavy Pulse browser can't grow it without bound.
+    await this.pruneMap(BBD.KEYS.creators, { maxAgeMs: 30 * DAY, maxEntries: 2000 });
+    // Journal keeps a long history for the win-rate view; timestamp by close
+    // (falling back to open for still-running trades).
+    await this.pruneMap(BBD.KEYS.journal, {
+      maxAgeMs: 90 * DAY, maxEntries: 1000, tsOf: (v) => v && (v.closeTs || v.openTs)
+    });
     // snooze values are expiry timestamps: drop the expired
     const snoozes = await this.get(BBD.KEYS.snoozes, {});
     const liveSnoozes = Object.fromEntries(
@@ -79,13 +88,19 @@ BBD.store = {
     if (Object.keys(liveSnoozes).length !== Object.keys(snoozes).length) {
       await this.set(BBD.KEYS.snoozes, liveSnoozes);
     }
+    // daystats holds only the current day's guard dismissals — drop yesterday's
+    const daystats = await this.get(BBD.KEYS.daystats, {});
+    if (daystats.lossDismissedDay && daystats.lossDismissedDay !== BBD.localDayKey()) {
+      await this.set(BBD.KEYS.daystats, {});
+    }
     // dismissed entries only matter while the position is still held
     const [dismissed, positions] = await Promise.all([
       this.get(BBD.KEYS.dismissed, {}),
       this.get(BBD.KEYS.positions, {})
     ]);
     const liveDismissed = Object.fromEntries(
-      Object.entries(dismissed).filter(([addr]) => positions[addr])
+      Object.entries(dismissed).filter(([key]) => positions[key] ||
+        (key.startsWith('peak:') && positions[key.slice('peak:'.length)]))
     );
     if (Object.keys(liveDismissed).length !== Object.keys(dismissed).length) {
       await this.set(BBD.KEYS.dismissed, liveDismissed);

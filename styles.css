@@ -19,38 +19,47 @@
   bottom: 64px;
   right: 16px;
   z-index: 2147483000;
-  background: #111827;
-  color: #f59e0b;
-  border: 1px solid #f59e0b;
-  border-radius: 999px;
-  padding: 6px 14px;
-  font: 600 12px/1.4 system-ui, sans-serif;
+  background: rgba(17, 24, 39, 0.82);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  color: #fbbf24;
+  border: 1px solid rgba(245, 158, 11, 0.55);
+  border-radius: 12px;
+  padding: 7px 15px;
+  font: 600 12px/1.4 -apple-system, system-ui, sans-serif;
+  letter-spacing: -0.01em;
   cursor: pointer;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+  transition: transform 0.12s ease, border-color 0.12s ease;
 }
 #bbd-filter-chip:hover {
-  background: #1f2937;
+  transform: translateY(-1px);
+  border-color: rgba(245, 158, 11, 0.9);
 }
 
 /* Manual refresh button */
 #bbd-refresh {
   position: fixed;
   bottom: 64px;
-  right: 178px;
+  right: 182px;
   z-index: 2147483000;
-  width: 30px;
-  height: 30px;
+  width: 34px;
+  height: 34px;
   border-radius: 50%;
-  background: #111827;
+  background: rgba(17, 24, 39, 0.82);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
   color: #94a3b8;
-  border: 1px solid #334155;
-  font: 700 15px/1 system-ui, sans-serif;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  font: 700 16px/1 system-ui, sans-serif;
   cursor: pointer;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+  transition: transform 0.12s ease, color 0.12s ease, border-color 0.12s ease;
 }
 #bbd-refresh:hover {
+  transform: translateY(-1px);
   color: #e5e7eb;
-  border-color: #64748b;
+  border-color: rgba(255, 255, 255, 0.3);
 }
 #bbd-refresh.bbd-spinning {
   animation: bbd-spin 0.6s linear;
@@ -96,6 +105,63 @@ a[href*="/token/"]:hover .bbd-override,
   z-index: 9;
   font-size: 13px;
   filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.6));
+}
+
+/* Per-card safety readout (🛡 N/7) in the card's bottom-right corner. */
+.bbd-cardintel {
+  position: absolute;
+  bottom: 4px;
+  right: 4px;
+  z-index: 9;
+  padding: 0 6px;
+  border-radius: 999px;
+  font: 700 10px/1.7 system-ui, sans-serif;
+  display: none;
+}
+.bbd-cardintel.bbd-ci-good { background: #052e16; color: #86efac; border: 1px solid #22c55e; }
+.bbd-cardintel.bbd-ci-warn { background: #292112; color: #fcd34d; border: 1px solid #f59e0b; }
+.bbd-cardintel.bbd-ci-bad { background: #2d1212; color: #fca5a5; border: 1px solid #ef4444; }
+
+/* Dangerous contract/hook (owner can drain liquidity): hard red tint + ⛔.
+   The strongest on-card warning — this is funds-at-risk, not just noise. */
+.bbd-danger {
+  outline: 2px solid #ef4444 !important;
+  outline-offset: -2px;
+  border-radius: 8px;
+}
+.bbd-danger::after {
+  content: '⛔ risky contract';
+  position: absolute;
+  bottom: 4px;
+  left: 4px;
+  z-index: 9;
+  background: rgba(153, 27, 27, 0.95);
+  color: #fff1f2;
+  font: 700 9px/1.5 system-ui, sans-serif;
+  padding: 0 5px;
+  border-radius: 4px;
+  letter-spacing: 0.02em;
+}
+
+/* Repeat-offender creator: amber warning tint + ⚠️ marker. Stays visible
+   (unlike hidden memes) so a known-bad dev is obvious rather than silently gone. */
+.bbd-baddev {
+  outline: 2px solid #f59e0b !important;
+  outline-offset: -2px;
+  border-radius: 8px;
+}
+.bbd-baddev::after {
+  content: '⚠️ dev';
+  position: absolute;
+  bottom: 4px;
+  left: 4px;
+  z-index: 9;
+  background: rgba(180, 83, 9, 0.9);
+  color: #fff7ed;
+  font: 700 9px/1.5 system-ui, sans-serif;
+  padding: 0 5px;
+  border-radius: 4px;
+  letter-spacing: 0.03em;
 }
 
 /* 🔥 Best-guess highlight: passes every on-card safety metric + utility signal */
@@ -154,6 +220,81 @@ a[href*="/token/"]:hover .bbd-override,
   border: 1px solid #ef4444;
 }
 
+/* Daily loss-limit overlay: a prominent, dismissible "step away" card. */
+#bbd-fomo {
+  position: fixed;
+  top: 72px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2147483002;
+  display: none;
+  align-items: center;
+  gap: 14px;
+  max-width: 92vw;
+  padding: 12px 18px;
+  background: linear-gradient(90deg, #450a0a, #7f1d1d, #450a0a);
+  border: 2px solid #ef4444;
+  border-radius: 12px;
+  color: #fee2e2;
+  font: 700 14px/1.4 system-ui, sans-serif;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.55);
+}
+#bbd-fomo button {
+  background: #b91c1c;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 5px 12px;
+  font: 600 12px/1.6 system-ui, sans-serif;
+  cursor: pointer;
+  white-space: nowrap;
+}
+#bbd-fomo button:hover { background: #991b1b; }
+
+/* Revenge-trade advisory on a token page you recently sold at a loss. */
+#bbd-guard-revenge {
+  position: fixed;
+  top: 82px;
+  right: 16px;
+  z-index: 2147483000;
+  display: none;
+  align-items: center;
+  gap: 10px;
+  width: min(380px, calc(100vw - 32px));
+  padding: 10px 12px;
+  background: rgba(41, 33, 18, 0.96);
+  border: 1px solid #f59e0b;
+  border-radius: 10px;
+  color: #fcd34d;
+  font: 600 12px/1.4 system-ui, sans-serif;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(8px);
+  animation: bbd-toast-in 0.18s ease-out;
+}
+#bbd-guard-revenge span { flex: 1; }
+#bbd-guard-revenge button {
+  flex: none;
+  border: 0;
+  border-radius: 999px;
+  padding: 3px 10px;
+  background: #92400e;
+  color: #fef3c7;
+  font: 700 11px/1.5 system-ui, sans-serif;
+  cursor: pointer;
+}
+#bbd-guard-revenge button:hover { background: #78350f; }
+@keyframes bbd-toast-in {
+  from { opacity: 0; transform: translateX(12px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+@media (max-width: 600px) {
+  #bbd-guard-revenge {
+    top: 70px;
+    right: 10px;
+    width: min(340px, calc(100vw - 20px));
+  }
+}
+
 /* Take-profit banner */
 #bbd-banner {
   position: fixed;
@@ -188,6 +329,33 @@ a.bbd-banner-msg:hover {
 .bbd-banner-more {
   font: 500 12px/1.4 system-ui, sans-serif;
   color: #86efac;
+}
+/* Loss rows read red even inside the mixed (winners + losers) banner. */
+.bbd-banner-row-loss .bbd-banner-msg {
+  color: #fecaca;
+}
+.bbd-banner-row-giveback .bbd-banner-msg {
+  color: #fde68a;
+}
+/* Mixed banner: calm the pulsing green edge once a loss is present. */
+#bbd-banner.bbd-has-loss {
+  animation: none;
+  border-bottom-color: #f59e0b;
+}
+/* Loss-only banner: a red nag, not a green celebration. */
+#bbd-banner.bbd-loss-only {
+  background: linear-gradient(90deg, #2d1212, #4c1d1d, #2d1212);
+  border-bottom-color: #ef4444;
+  color: #fee2e2;
+}
+#bbd-banner.bbd-loss-only .bbd-banner-more {
+  color: #fca5a5;
+}
+#bbd-banner.bbd-loss-only button {
+  background: #b91c1c;
+}
+#bbd-banner.bbd-loss-only button:hover {
+  background: #991b1b;
 }
 @keyframes bbd-pulse {
   0%, 100% { border-bottom-color: #22c55e; }

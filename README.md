@@ -116,6 +116,40 @@ persistent banner — symbol, gain, and a link to its chart, each with its own
 snooze and dismiss. Dismissing one doesn't hide the others. A common pattern
 from profitable traders: treat it as "sell half", not "sell all".
 
+### Cut losses & protect winners
+
+The banner runs both ways. A **stop-loss** row nags when a position falls past
+your limit (default −25%), so losers get cut, not just winners taken. A
+**peak-giveback** row warns when an open winner hands back too many points from
+its observed peak — a trailing-discipline prompt (it never executes trades).
+
+### Trade journal & behavior mirror
+
+Every position's lifecycle is logged locally as an immutable per-trade record:
+entry safety snapshot, peak, and — only when the last PnL sample was fresh — a
+realized exit. The popup mirrors your behavior back: win rate, average tracked
+exit, and **average profit given back** (the number the take-profit banner
+exists to shrink). Export or clear it anytime; nothing leaves your machine.
+
+### Anti-FOMO guards
+
+A daily losing-trade limit shows a "step away" overlay once you've closed too
+many losers today. Re-buying a token you recently closed at a loss raises a
+compact **revenge-trade** toast on that token's page — only if you actually hold
+it again, never from merely viewing it.
+
+### Dev, contract & dump guards
+
+- **Creator reputation** — flags tokens whose creator is a serial launcher or
+  has rugged before, using data no single card shows.
+- **Contract/hook audit** — flags tokens whose contract or Uniswap-v4 hook can
+  drain liquidity or trap LPs (the strongest rug signal there is).
+- **Dump alerts** — watches the trade feed of tokens you hold and pings when the
+  dev sells or a whale unloads.
+
+Portfolio PnL is read from the balances API (whole wallet, accurate unrealized
+PnL), serialized through the service worker so multiple open tabs never race.
+
 ### 📱 Telegram alerts (optional)
 
 🔥/💎 discoveries go to Telegram only (desktop stays quiet). Take-profit alerts

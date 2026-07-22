@@ -11,12 +11,12 @@
   const shutdown = () => {
     intervals.forEach(clearInterval);
     observer.disconnect();
-    ['bbd-filter-chip', 'bbd-banner', 'bbd-refresh', 'bbd-intel']
+    ['bbd-filter-chip', 'bbd-banner', 'bbd-refresh', 'bbd-intel', 'bbd-fomo', 'bbd-guard-revenge']
       .forEach((id) => document.getElementById(id)?.remove());
-    document.querySelectorAll('.bbd-hidden, .bbd-gem, .bbd-hot, .bbd-override')
+    document.querySelectorAll('.bbd-hidden, .bbd-gem, .bbd-hot, .bbd-baddev, .bbd-danger, .bbd-override, .bbd-cardintel')
       .forEach((el) => {
-        if (el.classList.contains('bbd-override')) el.remove();
-        else el.classList.remove('bbd-hidden', 'bbd-gem', 'bbd-hot');
+        if (el.classList.contains('bbd-override') || el.classList.contains('bbd-cardintel')) el.remove();
+        else el.classList.remove('bbd-hidden', 'bbd-gem', 'bbd-hot', 'bbd-baddev', 'bbd-danger');
       });
   };
   const guard = (fn) => () => {
@@ -32,6 +32,7 @@
     BBD.pnl.scan();
     BBD.intel.scan();
     BBD.banner.tick();
+    BBD.guard.tick();
   };
 
   // Manual refresh button: forces a full re-scan on demand.
@@ -76,12 +77,13 @@
     }
   }), BBD.ROUTE_POLL_MS));
 
-  // Regular PnL + intel + banner refresh.
+  // Regular PnL + intel + banner + guard refresh.
   intervals.push(setInterval(guard(() => {
     ensureRefreshBtn();
     BBD.pnl.scan();
     BBD.intel.scan();
     BBD.banner.tick();
+    BBD.guard.tick();
   }), BBD.POLL_MS));
 
   // React immediately when settings change from the popup.
@@ -98,6 +100,15 @@
   // Storage housekeeping: at startup and hourly (#2).
   BBD.store.pruneAll();
   intervals.push(setInterval(guard(() => BBD.store.pruneAll()), 3600 * 1000));
+
+  // Creator-reputation model lives in memory during a session; persist it on a
+  // slow cadence and when the tab goes away so observations survive a reload.
+  intervals.push(setInterval(guard(() => BBD.creator.flush()), 30 * 1000));
+  window.addEventListener('pagehide', () => BBD.creator.flush());
+
+  // Watch held positions' trade feeds for dev/whale dumps (#8). Slower cadence
+  // than the DOM polls — these are real network calls, one per held token.
+  intervals.push(setInterval(guard(() => BBD.dump.tick()), 20 * 1000));
 
   lastPath = location.pathname;
   ensureRefreshBtn();

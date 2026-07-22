@@ -21,6 +21,10 @@ const NAMES_PATH = join(ROOT, 'names.json');     // replica registry
 const TRACKED_PATH = join(ROOT, 'tracked.json'); // user-tracked tokens
 const OFFSET_PATH = join(ROOT, 'tg-offset.json');
 const WATCH_PATH = join(ROOT, 'watchwords.json'); // { word: { ts } }
+// Canonical hot-logic config, shared with the extension (memeBadges/keywords/
+// socialWeights/hotGates). Read here so the watcher can't drift from the
+// extension — test/config-sync.test.js fails if the JSON and constants diverge.
+const HOT_CONFIG_PATH = join(ROOT, '..', 'shared', 'hot-config.json');
 
 const loadJson = (path, fallback) => {
   try {
@@ -33,6 +37,11 @@ const loadJson = (path, fallback) => {
 const saveJson = (path, data) => writeFileSync(path, JSON.stringify(data, null, 1));
 
 const config = loadJson(CONFIG_PATH, {});
+const HOT_CONFIG = loadJson(HOT_CONFIG_PATH, null);
+if (!HOT_CONFIG) {
+  console.error(`[watcher] missing ${HOT_CONFIG_PATH} — cannot score without the shared hot-config.`);
+  process.exit(1);
+}
 const CHAINS = config.chains || ['robinhood'];
 const INTERVAL_MS = (config.intervalSec || 30) * 1000;
 const RELOAD_MS = (config.reloadMin || 30) * 60 * 1000;
@@ -249,16 +258,14 @@ const scanPage = () => {
 };
 
 // --------------------------------------------------------------- scoring ----
-const PADS = ['Pons', 'bow.fun', 'Flap', 'Circus', 'Charms', 'Long.xyz', 'Bankr', 'Ape Store',
-  'Zora', 'Clanker', 'Flaunch', 'Stroid', 'Klik', 'Trench', 'Livo',
-  'Pump.fun', 'PumpFun', 'PumpSwap', 'Bags', 'Meteora DBC'];
-const SW = { GitHub: 4, MCP: 4, Docs: 3, Medium: 1, YouTube: 1, Website: 1, Discord: 1 };
-const UTILITY_TITLES = ['Website', 'GitHub', 'MCP', 'Docs', 'Medium', 'YouTube', 'Discord'];
-const KW = ['pepe', 'inu', 'doge', 'shib', 'wif', 'bonk', 'elon', 'trump', 'moon', 'wojak',
-  'chad', 'frog', 'cat', 'dog', 'kitty', 'pup', 'baby', 'fart', 'butt', 'cum', 'tendies',
-  'rug', 'ape', 'monke', 'gigachad', 'meme'];
-const AMB = ['cat', 'dog', 'ape', 'butt', 'baby', 'moon', 'pup', 'rug', 'cum', 'meme', 'chad'];
-const GATES = { top10: 30, dev: 2, snipers: 15, bundlers: 15, insiders: 20, holders: 100 };
+// All hot-logic lists come from the shared config so the watcher and the
+// extension score identically (single source of truth: shared/hot-config.json).
+const PADS = HOT_CONFIG.memeBadges;
+const SW = HOT_CONFIG.socialWeights;
+const UTILITY_TITLES = Object.keys(SW).filter((k) => SW[k] > 0);
+const KW = HOT_CONFIG.memeKeywords;
+const AMB = HOT_CONFIG.ambiguousKeywords;
+const GATES = HOT_CONFIG.hotGates;
 
 const hasKw = (t) => KW.some((kw) => AMB.includes(kw)
   ? new RegExp(`(^|[^a-z0-9])${kw}([^a-z0-9]|$)`, 'i').test(t)

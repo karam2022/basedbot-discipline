@@ -27,10 +27,11 @@ BBD.intel = (() => {
   const expandPanel = (addr) => {
     if (document.body.innerText.includes('Top 10 H.')) return;
     if (addr && autoExpanded.has(addr)) return;
+    const btn = [...document.querySelectorAll('button')]
+      .find((el) => el.textContent.trim() === 'Token Info');
+    if (!btn) return;
     if (addr) autoExpanded.add(addr);
-    [...document.querySelectorAll('div,button,span')]
-      .filter((el) => el.textContent.trim() === 'Token Info' && el.childElementCount <= 1)
-      .forEach((el) => el.click());
+    btn.click();
   };
 
   // Values render BEFORE their label ("19% § Top 10 H.").
@@ -86,7 +87,16 @@ BBD.intel = (() => {
       ? null : (Math.max(m.buyTax || 0, m.sellTax || 0) <= settings.maxTaxPct)]
   ];
 
-  const renderVerdict = (checks) => {
+  // One-line summary of the creator's track record, or '' when there's nothing
+  // worth saying (unknown dev, or a single clean launch).
+  const devNote = (rep) => {
+    if (!rep || !rep.creatorAddr || (!rep.flagged && rep.launchCount <= 1)) return '';
+    const launches = `${rep.launchCount} launch${rep.launchCount === 1 ? '' : 'es'}`;
+    const rugs = rep.ruggedCount ? `, ${rep.ruggedCount} rugged` : '';
+    return ` · 👤 dev: ${launches}${rugs}${rep.flagged ? ' ⚠️' : ''}`;
+  };
+
+  const renderVerdict = (checks, rep, danger) => {
     let el = document.getElementById('bbd-intel');
     if (!el || !el.isConnected) {
       el = document.createElement('div');
@@ -95,12 +105,18 @@ BBD.intel = (() => {
     }
     const passed = checks.filter(([, v]) => v === true);
     const failed = checks.filter(([, v]) => v === false);
-    const cls = failed.length === 0 ? 'bbd-good' : failed.length <= 2 ? 'bbd-warn' : 'bbd-bad';
+    // A flagged creator or a drainable contract forces the chip red even if the
+    // token's own snapshot looks clean — the whole point of the guards.
+    const cls = (danger && danger.danger) || (rep && rep.flagged) ? 'bbd-bad'
+      : failed.length === 0 ? 'bbd-good' : failed.length <= 2 ? 'bbd-warn' : 'bbd-bad';
     el.className = cls;
     const failText = failed.length
       ? ' · ⚠️ ' + failed.map(([n]) => n).join(', ')
       : ' · clean';
-    el.textContent = `🛡 ${passed.length}/${checks.length - checks.filter(([, v]) => v === null).length} checks${failText}`;
+    const dangerNote = danger && danger.danger
+      ? ` · ⛔ ${danger.reasons[0] || 'contract can drain liquidity'}`
+      : '';
+    el.textContent = `🛡 ${passed.length}/${checks.length - checks.filter(([, v]) => v === null).length} checks${failText}${devNote(rep)}${dangerNote}`;
     el.style.display = 'block';
   };
 
@@ -116,7 +132,14 @@ BBD.intel = (() => {
       expandPanel(addr);
       const metrics = parsePanel();
       if (!metrics) return;
-      renderVerdict(runChecks(metrics, settings));
+      // Record this token under its creator, then read the dev's track record.
+      let rep = null;
+      if (addr && settings.creatorGuardEnabled) {
+        BBD.creator.observe(addr, BBD.feed.creatorFor(addr), BBD.feed.marketFor(addr));
+        rep = BBD.creator.verdictFor(addr, settings);
+      }
+      const danger = addr && settings.auditGuardEnabled ? BBD.feed.auditFor(addr) : null;
+      renderVerdict(runChecks(metrics, settings), rep, danger);
       if (addr) await BBD.store.mergeEntry(BBD.KEYS.intel, addr, metrics);
     } catch (err) {
       console.warn('[bbd] intel scan failed', err);

@@ -195,6 +195,20 @@ textarea {
 .hint { font-size: 11px; color: var(--muted); line-height: 1.4; margin-top: 4px; }
 .hint.mono { font-family: var(--mono); font-size: 10px; letter-spacing: 0.02em; }
 
+/* ---- Journal summary + data-health readouts ---------------------------- */
+#journalSummary .field, #health .field {
+  font-family: var(--mono); font-size: 12px; color: var(--muted); flex: none;
+}
+#journalSummary .field.strong { color: var(--ink); font-weight: 500; }
+
+/* ---- Text-link buttons (journal export / clear) ------------------------ */
+.linkbtn {
+  font-family: var(--mono); font-size: 10px; letter-spacing: 0.08em;
+  background: none; border: none; color: var(--muted); cursor: pointer;
+  text-transform: uppercase; padding: 0; margin-right: 16px;
+}
+.linkbtn:hover { color: var(--ink); text-decoration: underline; }
+
 /* ---- Toast (Saved) ----------------------------------------------------- */
 #status {
   position: fixed; left: 0; right: 0; bottom: 0;

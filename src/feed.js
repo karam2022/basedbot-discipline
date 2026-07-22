@@ -8,8 +8,15 @@ BBD.feed = (() => {
   // Stats gate 🔥 alerts — stale values must lose to a fresh DOM parse.
   const STATS_TTL_MS = 10 * 60 * 1000;
   const MAX_ENTRIES = 1500;
-  const stats = new Map();  // addr -> { holders, pro, top10, ..., paid, ts }
-  const titles = new Map(); // addr -> { list: ['Website', ...], ts }
+  const stats = new Map();   // addr -> { holders, pro, top10, ..., paid, ts }
+  const titles = new Map();  // addr -> { list: ['Website', ...], ts }
+  const creator = new Map(); // addr -> creatorAddress (for the creator guard)
+  const market = new Map();  // addr -> { liq, mcap, isLaunchpad, symbol, ts }
+  const audit = new Map();   // addr -> { danger, critical, ownerRenounced, reasons, ts }
+  const balances = new Map(); // positionKey -> validated held-position snapshot
+  let balancesSeen = false;
+  let balancesTs = 0;
+  let prices = {};           // { ETH: number, SOL: number, ... }
 
   // metadata/batch keys carry a chain suffix ("0x…-4663"); metrics keys don't.
   // Mirror tokenAddrFromHref (#5): lowercase hex EVM addresses for stable keys,
@@ -28,6 +35,12 @@ BBD.feed = (() => {
     const n = Number(v);
     return Number.isFinite(n) && n >= 0 ? n : null;
   };
+  const usd = (v) => {
+    const n = Number(v);
+    return Number.isFinite(n) && n >= 0 ? n : null;
+  };
+  // creatorAddress / token address share the EVM-lowercase, base58-preserve rule.
+  const isAddr = (v) => typeof v === 'string' && /^(0x[a-fA-F0-9]{6,}|[1-9A-HJ-NP-Za-km-z]{20,})$/.test(v);
 
   const prune = (map) => {
     if (map.size <= MAX_ENTRIES) return;
@@ -51,14 +64,38 @@ BBD.feed = (() => {
         paid: m.dexPaid === true,
         ts: Date.now()
       };
+      const addr = normAddr(key);
+      // creatorAddress rides on the metrics payload; cache it regardless of
+      // whether the stat block itself is complete (the creator guard wants it).
+      if (isAddr(m.creatorAddress)) creator.set(addr, normAddr(m.creatorAddress));
       // Same completeness bar as parseCardStats: partial stats can't be
       // trusted to gate safety checks — skip and let the DOM parser try.
       if (entry.holders === null || entry.pro === null) continue;
       if ([entry.top10, entry.dev, entry.snipers, entry.bundlers, entry.insiders]
         .some((v) => v === null)) continue;
-      stats.set(normAddr(key), entry);
+      stats.set(addr, entry);
     }
     prune(stats);
+    prune(creator);
+  };
+
+  // Feed list payload (/api/tokens): market cap + liquidity per token, the
+  // observed values the creator guard uses to detect a rug (peaked then died).
+  const takeList = (rows) => {
+    if (!Array.isArray(rows)) return;
+    for (const t of rows) {
+      if (!t || typeof t !== 'object' || !isAddr(t.address)) continue;
+      const liq = usd(t.liquidity_usd);
+      const mcap = usd(t.market_cap_usd);
+      if (liq === null && mcap === null) continue;
+      market.set(normAddr(t.address), {
+        liq, mcap,
+        isLaunchpad: t.is_launchpad === true,
+        symbol: typeof t.symbol === 'string' ? t.symbol : '',
+        ts: Date.now()
+      });
+    }
+    prune(market);
   };
 
   // Map metadata links onto the title vocabulary the DOM cards use, so
@@ -99,12 +136,101 @@ BBD.feed = (() => {
     prune(titles);
   };
 
+  const takePrices = (data) => {
+    const next = {};
+    for (const [sym, v] of Object.entries(data)) {
+      const n = Number(v);
+      if (Number.isFinite(n) && n >= 0) next[sym] = n;
+    }
+    if (Object.keys(next).length) prices = next;
+  };
+
+  // Reduce one token's audit block to a safety verdict. "danger" means funds
+  // are at real risk: the token contract is flagged unsafe, or its hook carries
+  // a critical vulnerability (owner can drain liquidity / trap LPs / levy hidden
+  // fees) — signals no holder stat exposes.
+  const CRIT = new Set(['critical']);
+  const evalAudit = (a) => {
+    if (!a || typeof a !== 'object') return null;
+    const vulns = a.hookAudit && Array.isArray(a.hookAudit.vulnerabilities)
+      ? a.hookAudit.vulnerabilities : [];
+    const criticals = vulns.filter((v) => v && CRIT.has(v.impact));
+    const hookUnsafe = a.hookAudit ? a.hookAudit.isSafe === false : false;
+    const tokenUnsafe = a.isTokenSafe === false;
+    const danger = tokenUnsafe || (hookUnsafe && criticals.length > 0);
+    const reasons = [];
+    if (tokenUnsafe) reasons.push('token contract flagged unsafe');
+    for (const v of criticals.slice(0, 2)) {
+      reasons.push(typeof v.description === 'string' && v.description
+        ? v.description.replace(/\s+/g, ' ').slice(0, 90)
+        : (v.type || 'critical hook risk'));
+    }
+    return {
+      danger,
+      critical: criticals.length > 0,
+      ownerRenounced: a.ownerRenounced === true,
+      reasons,
+      ts: Date.now()
+    };
+  };
+  const takeAudit = (objs) => {
+    if (!Array.isArray(objs)) return;
+    for (const o of objs) {
+      if (!o || o.done || !isAddr(o.address) || !o.data) continue;
+      const v = evalAudit(o.data.audit);
+      if (v) audit.set(normAddr(o.address), v);
+    }
+    prune(audit);
+  };
+
+  // Wallet holdings (/api/v1/balances): the authoritative position list with
+  // accurate unrealized PnL — pnl.js uses this over fragile DOM scraping. Each
+  // token: { token, symbol, valueUsd, pnl:{ relative(%), absolute($) }, pool }.
+  const takeBalances = (wallets) => {
+    if (!Array.isArray(wallets)) return;
+    const next = new Map();
+    const sourceTs = Date.now();
+    wallets.forEach((w, walletIndex) => {
+      const toks = w && Array.isArray(w.tokens) ? w.tokens : [];
+      const walletRaw = w && (w.wallet || w.walletAddress || w.address || w.owner);
+      const wallet = isAddr(walletRaw) ? normAddr(walletRaw) : `wallet${walletIndex}`;
+      for (const t of toks) {
+        if (!t || !isAddr(t.token)) continue;
+        const addr = normAddr(t.token);
+        const rel = t.pnl && Number(t.pnl.relative);
+        const abs = t.pnl && Number(t.pnl.absolute);
+        const chainRaw = (t.pool && t.pool.chain) || t.network;
+        const chain = typeof chainRaw === 'string' ? chainRaw.toLowerCase() : null;
+        const positionKey = BBD.positionKey(addr, chain, wallet);
+        next.set(positionKey, {
+          positionKey,
+          addr,
+          symbol: typeof t.symbol === 'string' ? t.symbol : '',
+          pct: Number.isFinite(rel) ? rel : null,
+          pnlUsd: Number.isFinite(abs) ? abs : null,
+          valueUsd: usd(t.valueUsd),
+          chain,
+          wallet,
+          sourceTs
+        });
+      }
+    });
+    balances.clear();
+    for (const [k, v] of next) balances.set(k, v);
+    balancesTs = sourceTs;
+    balancesSeen = true; // an empty holdings list is still authoritative (all sold)
+  };
+
   window.addEventListener('message', (ev) => {
     if (ev.source !== window || ev.origin !== location.origin) return;
     const msg = ev.data;
     if (!msg || msg.__bbd !== 'api' || !msg.data || typeof msg.data !== 'object') return;
     if (msg.kind === 'metrics') takeMetrics(msg.data);
     else if (msg.kind === 'metadata') takeMetadata(msg.data);
+    else if (msg.kind === 'list') takeList(msg.data);
+    else if (msg.kind === 'prices') takePrices(msg.data);
+    else if (msg.kind === 'audit') takeAudit(msg.data);
+    else if (msg.kind === 'balances') takeBalances(msg.data);
   });
   // The load-time batches fired before this listener existed.
   window.postMessage({ __bbd: 'replay-request' }, location.origin);
@@ -116,6 +242,23 @@ BBD.feed = (() => {
   };
   // Social links never really expire; ts is only used for pruning.
   const titlesFor = (addr) => (addr && titles.get(addr)?.list) || [];
+  // Creator address and last-seen market for the creator guard. No TTL: these
+  // are reference facts, and the guard's own history is what carries meaning.
+  const creatorFor = (addr) => (addr && creator.get(addr)) || null;
+  const marketFor = (addr) => (addr && market.get(addr)) || null;
+  const auditFor = (addr) => (addr && audit.get(addr)) || null;
+  const priceOf = (sym) => (sym && prices[sym]) || null;
+  const ethPrice = () => prices.ETH || null;
+  // Held positions from the balances API. Freshness gates pnl.js switching off
+  // DOM fallback — until the first fetch is tapped, "no positions" cannot be
+  // distinguished from "not loaded yet".
+  const heldPositions = () => [...balances.values()].map((v) => ({ ...v }));
+  const hasBalances = () => balancesSeen;
+  const hasFreshBalances = () => balancesSeen && Date.now() - balancesTs < BBD.BALANCES_TTL_MS;
+  const balancesUpdatedAt = () => balancesTs || null;
 
-  return { statsFor, titlesFor };
+  return {
+    statsFor, titlesFor, creatorFor, marketFor, auditFor, priceOf, ethPrice,
+    heldPositions, hasBalances, hasFreshBalances, balancesUpdatedAt
+  };
 })();

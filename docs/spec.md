@@ -1,6 +1,6 @@
-# basedbot-discipline — design spec (2026-07-21)
+# basedbot-discipline — design spec v1.9 (2026-07-22)
 
-Chrome extension (Manifest V3) for basedbot.app. Two jobs:
+Chrome extension (Manifest V3) for basedbot.app. Core jobs:
 
 ## 1. Meme filter (Pulse pages only)
 - Runs only on `/pulse/*` routes.
@@ -16,17 +16,31 @@ Chrome extension (Manifest V3) for basedbot.app. Two jobs:
 - MutationObserver (debounced) handles the live-updating feed; a 1s URL poll handles
   SPA route changes.
 
-## 2. Sell reminder (all basedbot pages)
+## 2. Position discipline (all basedbot pages)
 - Data sources (verified live):
   - Token page panel: `Bought / Sold / Holding / Unrealized PnL`.
   - Portfolio positions table: `Token / Amount / MC / Value / PnL` header.
-- Watcher polls the DOM every 5s on those pages, parses PnL % per position, caches to
-  `chrome.storage.local` keyed by token address.
+- Primary source is the tapped balances API. Positions are keyed by
+  chain/wallet/token and serialized through the service worker; fresh visible
+  DOM data is a fallback.
 - Banner logic (every basedbot page): any cached position with pct ≥ threshold
   (default +20%) shows a persistent top banner. Snooze (default 15 min) or Dismiss
   per position; dismissed positions re-fire when pct climbs another 10 points.
   Cache older than 30 min is labeled stale.
 - Optional Chrome notification on first threshold crossing.
+- Independent stop-loss and peak give-back warnings.
+
+## 3. Local journal and anti-FOMO
+
+- Immutable trade ID per position lifecycle; repeated trades never overwrite.
+- Stale exit samples remain unknown and cannot trigger a loss/revenge warning.
+- Daily-loss overlay plus dismissible revenge warning only while re-holding.
+
+## 4. Proactive risk alerts
+
+- Creator history and contract/hook audit flags.
+- Rotating held-position dump monitoring with adaptive liquidity threshold.
+- Reliable Chrome/Telegram delivery; dedupe is committed after success.
 
 ## Components
 - `manifest.json` — MV3, content scripts on `https://basedbot.app/*`, storage +

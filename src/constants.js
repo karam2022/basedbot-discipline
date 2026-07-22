@@ -10,9 +10,39 @@ BBD.DEFAULT_SETTINGS = Object.freeze({
   thresholdPct: 20,
   snoozeMin: 15,
   refireStepPct: 10,
+  // Stop-loss side of the discipline banner: nag on positions down past
+  // stopLossPct so losers get cut, not just winners taken.
+  stopLossEnabled: true,
+  stopLossPct: 25,
+  // Warn when an open winner falls this many percentage points from its
+  // observed peak. This turns the journal's peak into an actionable trailing
+  // discipline rule without executing trades.
+  peakGivebackEnabled: true,
+  peakGivebackPct: 15,
+  // Trade journal: log every position's entry safety snapshot, peak, and last
+  // fresh exit estimate so the popup can show behavior metrics honestly.
+  journalEnabled: true,
+  // Anti-FOMO guards (driven by the journal): a daily losing-trade limit that
+  // shows a "step away" overlay, and a revenge-trade warning when you reopen a
+  // token you just closed at a loss.
+  fomoGuardEnabled: true,
+  dailyLossLimit: 3,
+  revengeWindowMin: 60,
+  revengeToastSec: 10,
+  // A close is only classified as win/loss when the last PnL sample was fresh.
+  // Older samples are kept as estimates, but never drive revenge/loss guards.
+  exitSampleMaxAgeSec: 60,
+  // Dump alerts: watch the trade feed of held positions and ping when the dev
+  // sells, or a single sell exceeds whaleSellUsd. Only recent trades count.
+  dumpAlertsEnabled: true,
+  whaleSellUsd: 300,
+  whaleSellLiquidityPct: 2,
+  dumpWindowMin: 3,
   // Utility-score thresholds: hide below minScore, flag gems at gemMinScore.
   minScore: 2,
   gemMinScore: 4,
+  // Compact per-card safety readout (🛡 N/7) in each Pulse card's corner.
+  cardIntelEnabled: true,
   // Per-metric hard hide rules (see BBD.HIDE_METRICS). Each: hide any token
   // whose stat exceeds the max %, regardless of utility. Held tokens and
   // "always show" overrides are never hidden. top-10 on by default; the rest
@@ -40,7 +70,21 @@ BBD.DEFAULT_SETTINGS = Object.freeze({
   hotMinProRatio: 0.05,
   hotMaxProRatio: 0.6,
   hotMinUtilityScore: 2, // social/badge evidence only — stat bonus must NOT count toward this
+  // Dev/creator guard: flag tokens whose creator is a serial launcher or has
+  // rugged before. creatorAddress comes from the metrics API, joined with
+  // observed market cap/liquidity — a reputation signal no single card shows.
+  creatorGuardEnabled: true,
+  creatorMaxLaunches: 5,       // >= this many distinct observed tokens => serial farmer
+  creatorMaxRugs: 2,           // >= this many observed rugs => flagged
+  creatorRugMinPeakUsd: 8000,  // a token must have had a real market to count as a rug
+  creatorRugDeadLiqUsd: 800,   // ...and its liquidity must have since collapsed below this
+  // Contract/hook audit guard: flag tokens whose contract or Uniswap-v4 hook can
+  // drain liquidity, trap LPs or levy hidden fees (from /api/audit/batch).
+  auditGuardEnabled: true,
   // Launchpad badges (img alt values on Pulse cards) treated as meme sources.
+  // NOTE: memeBadges/memeKeywords + the hot* gates + score.js SOCIAL_WEIGHTS are
+  // mirrored in shared/hot-config.json (the VPS watcher reads that file). Keep
+  // them in sync — test/config-sync.test.js fails on drift.
   memeBadges: ['Pons', 'bow.fun', 'Flap', 'Circus', 'Charms', 'Long.xyz', 'Bankr', 'Ape Store',
     'Zora', 'Clanker', 'Flaunch', 'Stroid', 'Klik', 'Trench', 'Livo',
     'Pump.fun', 'PumpFun', 'PumpSwap', 'Bags', 'Meteora DBC'],
@@ -59,18 +103,33 @@ BBD.DEFAULT_SETTINGS = Object.freeze({
 // chrome.storage.local keys.
 BBD.KEYS = Object.freeze({
   settings: 'settings',   // user settings (merged over DEFAULT_SETTINGS)
-  positions: 'positions', // { [addr]: { symbol, pct, usd, ts } }
-  snoozes: 'snoozes',     // { [addr]: untilTimestampMs }
-  dismissed: 'dismissed', // { [addr]: pctAtDismissal }
+  positions: 'positions', // { [positionKey]: { addr, chain, wallet, pct, sourceTs, ... } }
+  snoozes: 'snoozes',     // { [positionKey]: untilTimestampMs }
+  dismissed: 'dismissed', // { [positionKey]: pctAtDismissal }
   overrides: 'overrides', // { [addr]: 'hide' | 'show' }
   intel: 'intel',         // { [addr]: parsed Token Info metrics + ts }
-  alerted: 'alerted'      // { [addr]: ts } — 🔥 telegram dedupe, 24h TTL
+  alerted: 'alerted',     // { [addr]: ts } — 🔥 telegram dedupe, 24h TTL
+  creators: 'creators',   // { [creatorAddr]: { tokens: { [addr]: {...} }, ts } }
+  journal: 'journal',     // { [tradeId]: { positionKey, addr, openTs, closeTs, ... } }
+  daystats: 'daystats',   // { lossDismissedDay: 'YYYY-MM-DD' } — per-day guard dismissals
+  guardDismissed: 'guardDismissed', // { [tradeId]: ts } — dismissed revenge advisories
+  positionsMeta: 'positionsMeta'     // { source, sourceTs, syncedTs } — data-health status
 });
+
+// Score penalty for a card whose creator is a flagged serial launcher/rugger.
+// Applied in filter.classify (not scoreCard) since it needs the addr → creator
+// lookup; matches the launchpad-badge penalty in weight.
+BBD.BAD_CREATOR_PENALTY = -3;
+
+// Score penalty for a token the audit flags as drainable/unsafe — heavier than
+// a meme badge: this is funds-at-risk, not just noise.
+BBD.AUDIT_DANGER_PENALTY = -5;
 
 BBD.STALE_MS = 30 * 60 * 1000;   // position data older than this is labeled stale
 BBD.SCAN_DEBOUNCE_MS = 300;
 BBD.POLL_MS = 5000;
 BBD.ROUTE_POLL_MS = 1000;
+BBD.BALANCES_TTL_MS = 2 * 60 * 1000;
 
 // Configurable per-metric hide rules. `stat` is the field name on parsed card
 // stats; `label` is the popup wording. Drives DEFAULT_SETTINGS keys
@@ -99,6 +158,13 @@ BBD.hasMemeKeyword = (text, keywords) => keywords.some((kw) => {
 // of these are never auto-hidden, only risk-ranked.
 BBD.UTILITY_TITLES = Object.freeze(['Website', 'GitHub', 'MCP', 'Docs', 'Medium', 'YouTube', 'Discord']);
 
+// Every launchpad badge the popup offers as a hide toggle (superset of the
+// default memeBadges — includes 'Virtual', which scores a bonus not a penalty).
+// Lives here so the popup shares this list instead of keeping its own copy.
+BBD.KNOWN_BADGES = Object.freeze(['Pons', 'Virtual', 'bow.fun', 'Flap', 'Circus', 'Charms', 'Bankr',
+  'Long.xyz', 'Ape Store', 'Zora', 'Clanker', 'Flaunch', 'Stroid', 'Klik', 'Trench', 'Livo',
+  'Pump.fun', 'PumpSwap', 'Bags', 'Meteora DBC']);
+
 // False once the extension is reloaded/removed and this content script is an
 // orphan — every chrome.* call would throw from then on.
 BBD.alive = () => {
@@ -116,6 +182,41 @@ BBD.tokenAddrFromHref = (href) => {
   // Hex EVM addresses are case-insensitive — normalize for stable map keys.
   // Base58 Solana addresses are case-SENSITIVE — lowercasing breaks URLs (#5).
   return m[1].startsWith('0x') ? m[1].toLowerCase() : m[1];
+};
+
+// Position identity must include chain and wallet: identical EVM contract
+// addresses can exist on multiple chains, and BasedBot may expose more than
+// one connected wallet. Legacy address-only entries remain readable.
+BBD.positionKey = (addr, chain, wallet) => {
+  if (!addr) return null;
+  const safeChain = String(chain || 'unknown').toLowerCase().replace(/[^a-z0-9_-]/g, '') || 'unknown';
+  const safeWallet = String(wallet || 'default').replace(/[^a-zA-Z0-9_-]/g, '') || 'default';
+  return `${safeChain}|${safeWallet}|${addr}`;
+};
+
+BBD.positionAddr = (key, position) => {
+  if (position && position.addr) return position.addr;
+  const raw = String(key || '');
+  return raw.includes('|') ? raw.slice(raw.lastIndexOf('|') + 1) : raw;
+};
+
+BBD.positionIsToken = (key, position, addr, chain) => {
+  if (!addr || BBD.positionAddr(key, position) !== addr) return false;
+  if (!chain || !position || !position.chain) return true;
+  return String(position.chain).toLowerCase() === String(chain).toLowerCase();
+};
+
+BBD.isHeld = (positions, addr, chain) => Object.entries(positions || {})
+  .some(([key, p]) => BBD.positionIsToken(key, p, addr, chain) &&
+    Date.now() - (p && (p.sourceTs || p.ts) || 0) <= BBD.STALE_MS);
+
+// Local-day key, unlike toISOString(), agrees with the local-midnight logic
+// used by the daily-loss guard around timezone boundaries.
+BBD.localDayKey = (date = new Date()) => {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
 };
 
 // Page-controlled text (token symbols/names) goes into Telegram messages and
