@@ -13,6 +13,11 @@ BBD.DEFAULT_SETTINGS = Object.freeze({
   // Utility-score thresholds: hide below minScore, flag gems at gemMinScore.
   minScore: 2,
   gemMinScore: 4,
+  // Hard concentration filter: hide any token whose top-10 holders own more
+  // than this %, regardless of utility. High concentration = pre-loaded dump.
+  // Held tokens and explicit "always show" overrides are never hidden by it.
+  hideByTopHolder: true,
+  hideTopHolderPct: 40,
   // 🔥 best-guess highlight: card must pass every on-card safety metric AND
   // carry a utility signal. Thresholds derived from the profile shared by
   // verified runners (PONS, Index, wire) vs farms (RYFT: top10 82%, insiders 67%).

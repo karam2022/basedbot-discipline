@@ -11,6 +11,8 @@ const DEFAULTS = {
   refireStepPct: 10,
   minScore: 2,
   gemMinScore: 4,
+  hideByTopHolder: true,
+  hideTopHolderPct: 40,
   hotEnabled: true,
   laptopHotAlerts: true,
   tgToken: '',
@@ -98,17 +100,19 @@ const renderOverrides = async () => {
 const init = async () => {
   const settings = await loadSettings();
 
-  for (const id of ['filterEnabled', 'hotEnabled', 'laptopHotAlerts', 'reminderEnabled', 'notifyEnabled']) {
+  for (const id of ['filterEnabled', 'hideByTopHolder', 'hotEnabled', 'laptopHotAlerts', 'reminderEnabled', 'notifyEnabled']) {
     $(id).checked = Boolean(settings[id]);
     $(id).addEventListener('change', () => saveSettings({ [id]: $(id).checked }));
   }
-  for (const id of ['thresholdPct', 'snoozeMin', 'minScore', 'gemMinScore']) {
+  for (const id of ['thresholdPct', 'snoozeMin', 'minScore', 'gemMinScore', 'hideTopHolderPct']) {
     $(id).value = settings[id];
     $(id).addEventListener('change', () => {
       const value = Number($(id).value);
       const mustBePositive = id === 'thresholdPct' || id === 'snoozeMin';
       // gemMinScore floor: 0 would mark every visible token a gem (#7).
       if (id === 'gemMinScore' && value < 1) return;
+      // top-holder % must be a sane 1-100.
+      if (id === 'hideTopHolderPct' && !(value >= 1 && value <= 100)) return;
       if (Number.isFinite(value) && (!mustBePositive || value > 0)) {
         saveSettings({ [id]: value });
       }

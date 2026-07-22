@@ -121,6 +121,13 @@ BBD.filter = (() => {
     if (info.addr && positions[info.addr]) return positive; // held: never hide
     if (info.addr && overrides[info.addr] === 'show') return positive;
     if (info.addr && overrides[info.addr] === 'hide') return 'hide';
+    // Hard concentration filter: top-10 over the limit is a rug-risk hide that
+    // beats utility and gem status (a 🔥 can't reach here — it's gated ≤30%).
+    // Only fires when we actually have the stat; unknown never hides.
+    if (settings.hideByTopHolder && stats && typeof stats.top10 === 'number'
+      && stats.top10 > settings.hideTopHolderPct) {
+      return 'hide';
+    }
     if (hot || gem) return positive;
     // Meme-named tokens hide regardless; anything with a real web presence
     // never hides — utility is shown and risk-ranked, not censored.
