@@ -174,6 +174,44 @@ BBD.filter = (() => {
     if (btn.title !== title) btn.title = title;
   };
 
+  // Compact per-card safety readout from the same card-visible stats the 🔥
+  // gate uses. LP-burn/lock and renounce aren't on cards (token page only), so
+  // the card verdict is deliberately a 7-check subset.
+  const cardChecks = (stats, s) => [
+    [`Top10 ≤${s.hotMaxTop10}%`, stats.top10 <= s.hotMaxTop10],
+    [`Dev ≤${s.hotMaxDev}%`, stats.dev <= s.hotMaxDev],
+    [`Snipers ≤${s.hotMaxSnipers}%`, stats.snipers <= s.hotMaxSnipers],
+    [`Bundlers ≤${s.hotMaxBundlers}%`, stats.bundlers <= s.hotMaxBundlers],
+    [`Insiders ≤${s.hotMaxInsiders}%`, stats.insiders <= s.hotMaxInsiders],
+    ['Dex Paid', stats.paid],
+    [`Holders ≥${s.hotMinHolders}`, stats.holders >= s.hotMinHolders]
+  ];
+
+  const ensureCardIntel = (card, stats, settings, show) => {
+    let el = card.querySelector('.bbd-cardintel');
+    if (!show || !stats) {
+      if (el && el.style.display !== 'none') el.style.display = 'none';
+      return;
+    }
+    if (!el) {
+      el = document.createElement('span');
+      el.className = 'bbd-cardintel';
+      card.style.position = 'relative';
+      card.appendChild(el);
+    }
+    const checks = cardChecks(stats, settings);
+    const failed = checks.filter(([, v]) => v === false);
+    const cls = `bbd-cardintel ${failed.length === 0 ? 'bbd-ci-good'
+      : failed.length <= 2 ? 'bbd-ci-warn' : 'bbd-ci-bad'}`;
+    if (el.className !== cls) el.className = cls;
+    setText(el, `🛡 ${checks.length - failed.length}/${checks.length}`);
+    const title = failed.length
+      ? 'Risk: ' + failed.map(([n]) => n).join(', ')
+      : 'All card safety checks pass';
+    if (el.title !== title) el.title = title;
+    if (el.style.display !== 'block') el.style.display = 'block';
+  };
+
   const render = () => {
     const chip = ensureChip();
     const gems = gemCount > 0 ? ` · ${gemCount} 💎` : '';
@@ -256,6 +294,7 @@ BBD.filter = (() => {
       // Warning marker is independent of hide/show: a held or user-kept token
       // stays visible but still shows its dev is a repeat offender.
       card.classList.toggle('bbd-baddev', badDev && state !== 'hide');
+      ensureCardIntel(card, stats, settings, settings.cardIntelEnabled && state !== 'hide');
       if (state === 'hide') hidden += 1;
       if (state === 'gem') gems += 1;
       if (state === 'hot') {
@@ -283,6 +322,7 @@ BBD.filter = (() => {
     document.querySelectorAll('.bbd-hidden, .bbd-gem, .bbd-hot, .bbd-baddev').forEach((el) => {
       el.classList.remove('bbd-hidden', 'bbd-gem', 'bbd-hot', 'bbd-baddev');
     });
+    document.querySelectorAll('.bbd-cardintel').forEach((el) => { el.style.display = 'none'; });
     const chip = document.getElementById('bbd-filter-chip');
     if (chip) chip.style.display = 'none';
     hiddenCount = 0;

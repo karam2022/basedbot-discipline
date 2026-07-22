@@ -98,6 +98,21 @@ a[href*="/token/"]:hover .bbd-override,
   filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.6));
 }
 
+/* Per-card safety readout (🛡 N/7) in the card's bottom-right corner. */
+.bbd-cardintel {
+  position: absolute;
+  bottom: 4px;
+  right: 4px;
+  z-index: 9;
+  padding: 0 6px;
+  border-radius: 999px;
+  font: 700 10px/1.7 system-ui, sans-serif;
+  display: none;
+}
+.bbd-cardintel.bbd-ci-good { background: #052e16; color: #86efac; border: 1px solid #22c55e; }
+.bbd-cardintel.bbd-ci-warn { background: #292112; color: #fcd34d; border: 1px solid #f59e0b; }
+.bbd-cardintel.bbd-ci-bad { background: #2d1212; color: #fca5a5; border: 1px solid #ef4444; }
+
 /* Repeat-offender creator: amber warning tint + ⚠️ marker. Stays visible
    (unlike hidden memes) so a known-bad dev is obvious rather than silently gone. */
 .bbd-baddev {

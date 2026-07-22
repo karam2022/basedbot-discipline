@@ -17,6 +17,8 @@ BBD.DEFAULT_SETTINGS = Object.freeze({
   // Utility-score thresholds: hide below minScore, flag gems at gemMinScore.
   minScore: 2,
   gemMinScore: 4,
+  // Compact per-card safety readout (🛡 N/7) in each Pulse card's corner.
+  cardIntelEnabled: true,
   // 🔥 best-guess highlight: card must pass every on-card safety metric AND
   // carry a utility signal. Thresholds derived from the profile shared by
   // verified runners (PONS, Index, wire) vs farms (RYFT: top10 82%, insiders 67%).

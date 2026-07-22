@@ -13,9 +13,9 @@
     observer.disconnect();
     ['bbd-filter-chip', 'bbd-banner', 'bbd-refresh', 'bbd-intel']
       .forEach((id) => document.getElementById(id)?.remove());
-    document.querySelectorAll('.bbd-hidden, .bbd-gem, .bbd-hot, .bbd-baddev, .bbd-override')
+    document.querySelectorAll('.bbd-hidden, .bbd-gem, .bbd-hot, .bbd-baddev, .bbd-override, .bbd-cardintel')
       .forEach((el) => {
-        if (el.classList.contains('bbd-override')) el.remove();
+        if (el.classList.contains('bbd-override') || el.classList.contains('bbd-cardintel')) el.remove();
         else el.classList.remove('bbd-hidden', 'bbd-gem', 'bbd-hot', 'bbd-baddev');
       });
   };

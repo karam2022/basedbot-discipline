@@ -13,6 +13,7 @@ const DEFAULTS = {
   stopLossPct: 25,
   minScore: 2,
   gemMinScore: 4,
+  cardIntelEnabled: true,
   hotEnabled: true,
   laptopHotAlerts: true,
   creatorGuardEnabled: true,
@@ -103,7 +104,7 @@ const renderOverrides = async () => {
 const init = async () => {
   const settings = await loadSettings();
 
-  for (const id of ['filterEnabled', 'hotEnabled', 'laptopHotAlerts', 'creatorGuardEnabled', 'reminderEnabled', 'stopLossEnabled', 'notifyEnabled']) {
+  for (const id of ['filterEnabled', 'cardIntelEnabled', 'hotEnabled', 'laptopHotAlerts', 'creatorGuardEnabled', 'reminderEnabled', 'stopLossEnabled', 'notifyEnabled']) {
     $(id).checked = Boolean(settings[id]);
     $(id).addEventListener('change', () => saveSettings({ [id]: $(id).checked }));
   }
