@@ -19,38 +19,47 @@
   bottom: 64px;
   right: 16px;
   z-index: 2147483000;
-  background: #111827;
-  color: #f59e0b;
-  border: 1px solid #f59e0b;
-  border-radius: 999px;
-  padding: 6px 14px;
-  font: 600 12px/1.4 system-ui, sans-serif;
+  background: rgba(17, 24, 39, 0.82);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  color: #fbbf24;
+  border: 1px solid rgba(245, 158, 11, 0.55);
+  border-radius: 12px;
+  padding: 7px 15px;
+  font: 600 12px/1.4 -apple-system, system-ui, sans-serif;
+  letter-spacing: -0.01em;
   cursor: pointer;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+  transition: transform 0.12s ease, border-color 0.12s ease;
 }
 #bbd-filter-chip:hover {
-  background: #1f2937;
+  transform: translateY(-1px);
+  border-color: rgba(245, 158, 11, 0.9);
 }
 
 /* Manual refresh button */
 #bbd-refresh {
   position: fixed;
   bottom: 64px;
-  right: 178px;
+  right: 182px;
   z-index: 2147483000;
-  width: 30px;
-  height: 30px;
+  width: 34px;
+  height: 34px;
   border-radius: 50%;
-  background: #111827;
+  background: rgba(17, 24, 39, 0.82);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
   color: #94a3b8;
-  border: 1px solid #334155;
-  font: 700 15px/1 system-ui, sans-serif;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  font: 700 16px/1 system-ui, sans-serif;
   cursor: pointer;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+  transition: transform 0.12s ease, color 0.12s ease, border-color 0.12s ease;
 }
 #bbd-refresh:hover {
+  transform: translateY(-1px);
   color: #e5e7eb;
-  border-color: #64748b;
+  border-color: rgba(255, 255, 255, 0.3);
 }
 #bbd-refresh.bbd-spinning {
   animation: bbd-spin 0.6s linear;
