@@ -8,6 +8,8 @@ BBD.filter = (() => {
   let gemCount = 0;
   let hotCount = 0;
   let peeking = false;
+  let filterOn = true; // reflects settings.filterEnabled for the chip label
+  let hiOn = true;     // reflects settings.hotEnabled for the chip label
   const hotSeen = new Set(); // addrs already notified this session
 
   const isPulse = () => location.pathname.startsWith('/pulse');
@@ -233,9 +235,12 @@ BBD.filter = (() => {
     const chip = ensureChip();
     const gems = gemCount > 0 ? ` · ${gemCount} 💎` : '';
     const hots = hotCount > 0 ? ` · ${hotCount} 🔥` : '';
-    setText(chip, peeking
-      ? `👁 peeking · ${hiddenCount} memecoins — hide again${gems}${hots}`
-      : `🚫 ${hiddenCount} memecoins hidden${gems}${hots}`);
+    const hidePart = filterOn
+      ? (peeking
+        ? `👁 peeking · ${hiddenCount} memecoins — hide again`
+        : `🚫 ${hiddenCount} memecoins hidden`)
+      : '💡 highlights on'; // hiding disabled — chip still surfaces gems/🔥
+    setText(chip, `${hidePart}${gems}${hots}`);
     const display =
       isPulse() && (hiddenCount > 0 || gemCount > 0 || hotCount > 0) ? 'block' : 'none';
     if (chip.style.display !== display) chip.style.display = display;
@@ -275,7 +280,11 @@ BBD.filter = (() => {
       return;
     }
     const settings = await BBD.store.settings();
-    if (!settings.filterEnabled) {
+    filterOn = settings.filterEnabled;
+    hiOn = settings.hotEnabled;
+    // Hiding and highlighting are independent (v1.8.2): only bail when BOTH are
+    // off, so turning off "Hide meme coins" no longer kills 🔥/💎 highlights.
+    if (!filterOn && !hiOn) {
       teardown();
       return;
     }
@@ -307,19 +316,25 @@ BBD.filter = (() => {
       const auditV = settings.auditGuardEnabled && info.addr ? BBD.feed.auditFor(info.addr) : null;
       const danger = !!(auditV && auditV.danger);
       const state = classify(stats, info, settings, overrides, positions, intel, badDev, danger);
-      card.classList.toggle('bbd-hidden', state === 'hide');
-      card.classList.toggle('bbd-gem', state === 'gem');
-      card.classList.toggle('bbd-hot', state === 'hot');
-      // Warning markers are independent of hide/show: a held or user-kept token
-      // stays visible but still shows its dev/contract risk.
-      card.classList.toggle('bbd-baddev', badDev && !danger && state !== 'hide');
-      card.classList.toggle('bbd-danger', danger && state !== 'hide');
+      // Each gate independent (v1.8.2): hiding follows filterEnabled, highlights
+      // follow hotEnabled — a token can be highlighted while hiding is off, and
+      // hidden while highlights are off.
+      const doHide = filterOn && state === 'hide';
+      const doGem = hiOn && state === 'gem';
+      const doHot = hiOn && state === 'hot';
+      card.classList.toggle('bbd-hidden', doHide);
+      card.classList.toggle('bbd-gem', doGem);
+      card.classList.toggle('bbd-hot', doHot);
+      // Warning markers ride on visibility (!doHide), not the raw verdict: a
+      // held/kept/unhidden token still shows its dev/contract risk.
+      card.classList.toggle('bbd-baddev', badDev && !danger && !doHide);
+      card.classList.toggle('bbd-danger', danger && !doHide);
       // intel[addr] (cached token-panel scrape) adds LP-burn/lock + renounce to
       // the card verdict for any token you've previously opened.
-      ensureCardIntel(card, stats, settings, intel[info.addr], settings.cardIntelEnabled && state !== 'hide');
-      if (state === 'hide') hidden += 1;
-      if (state === 'gem') gems += 1;
-      if (state === 'hot') {
+      ensureCardIntel(card, stats, settings, intel[info.addr], settings.cardIntelEnabled && !doHide);
+      if (doHide) hidden += 1;
+      if (doGem) gems += 1;
+      if (doHot) {
         hots += 1;
         notifyHot(info, settings, stats);
       }
