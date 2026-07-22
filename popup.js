@@ -2,44 +2,11 @@
 // via storage.onChanged.
 'use strict';
 
-const DEFAULTS = {
-  filterEnabled: true,
-  reminderEnabled: true,
-  notifyEnabled: false,
-  thresholdPct: 20,
-  snoozeMin: 15,
-  refireStepPct: 10,
-  stopLossEnabled: true,
-  stopLossPct: 25,
-  minScore: 2,
-  gemMinScore: 4,
-  cardIntelEnabled: true,
-  hotEnabled: true,
-  laptopHotAlerts: true,
-  creatorGuardEnabled: true,
-  creatorMaxLaunches: 5,
-  creatorMaxRugs: 2,
-  journalEnabled: true,
-  fomoGuardEnabled: true,
-  dailyLossLimit: 3,
-  revengeWindowMin: 60,
-  tgToken: '',
-  tgChatId: '',
-  memeBadges: ['Pons', 'bow.fun', 'Flap', 'Circus', 'Charms', 'Long.xyz', 'Bankr', 'Ape Store',
-    'Zora', 'Clanker', 'Flaunch', 'Stroid', 'Klik', 'Trench', 'Livo',
-    'Pump.fun', 'PumpFun', 'PumpSwap', 'Bags', 'Meteora DBC'],
-  memeKeywords: [
-    'pepe', 'inu', 'doge', 'shib', 'wif', 'bonk', 'elon', 'trump', 'moon',
-    'wojak', 'chad', 'frog', 'cat', 'dog', 'kitty', 'pup', 'baby', 'fart',
-    'butt', 'cum', 'tendies', 'rug', 'ape', 'monke', 'gigachad', 'meme'
-  ]
-};
-
-const KNOWN_BADGES = [
-  'Pons', 'Virtual', 'bow.fun', 'Flap', 'Circus', 'Charms', 'Bankr', 'Long.xyz',
-  'Ape Store', 'Zora', 'Clanker', 'Flaunch', 'Stroid', 'Klik', 'Trench', 'Livo',
-  'Pump.fun', 'PumpSwap', 'Bags', 'Meteora DBC'
-];
+// Single source of truth: constants.js (loaded before this script) provides
+// BBD.DEFAULT_SETTINGS and BBD.KNOWN_BADGES — no more hand-mirrored copies here.
+// Only the popup-only Telegram credentials are layered on top.
+const DEFAULTS = { ...BBD.DEFAULT_SETTINGS, tgToken: '', tgChatId: '' };
+const KNOWN_BADGES = BBD.KNOWN_BADGES;
 
 const $ = (id) => document.getElementById(id);
 const flash = (text) => {

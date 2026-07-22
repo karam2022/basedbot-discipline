@@ -53,6 +53,9 @@ BBD.DEFAULT_SETTINGS = Object.freeze({
   creatorRugMinPeakUsd: 8000,  // a token must have had a real market to count as a rug
   creatorRugDeadLiqUsd: 800,   // ...and its liquidity must have since collapsed below this
   // Launchpad badges (img alt values on Pulse cards) treated as meme sources.
+  // NOTE: memeBadges/memeKeywords + the hot* gates + score.js SOCIAL_WEIGHTS are
+  // mirrored in shared/hot-config.json (the VPS watcher reads that file). Keep
+  // them in sync — test/config-sync.test.js fails on drift.
   memeBadges: ['Pons', 'bow.fun', 'Flap', 'Circus', 'Charms', 'Long.xyz', 'Bankr', 'Ape Store',
     'Zora', 'Clanker', 'Flaunch', 'Stroid', 'Klik', 'Trench', 'Livo',
     'Pump.fun', 'PumpFun', 'PumpSwap', 'Bags', 'Meteora DBC'],
@@ -103,6 +106,13 @@ BBD.hasMemeKeyword = (text, keywords) => keywords.some((kw) => {
 // Social-link titles that count as a real web presence — tokens carrying any
 // of these are never auto-hidden, only risk-ranked.
 BBD.UTILITY_TITLES = Object.freeze(['Website', 'GitHub', 'MCP', 'Docs', 'Medium', 'YouTube', 'Discord']);
+
+// Every launchpad badge the popup offers as a hide toggle (superset of the
+// default memeBadges — includes 'Virtual', which scores a bonus not a penalty).
+// Lives here so the popup shares this list instead of keeping its own copy.
+BBD.KNOWN_BADGES = Object.freeze(['Pons', 'Virtual', 'bow.fun', 'Flap', 'Circus', 'Charms', 'Bankr',
+  'Long.xyz', 'Ape Store', 'Zora', 'Clanker', 'Flaunch', 'Stroid', 'Klik', 'Trench', 'Livo',
+  'Pump.fun', 'PumpSwap', 'Bags', 'Meteora DBC']);
 
 // False once the extension is reloaded/removed and this content script is an
 // orphan — every chrome.* call would throw from then on.

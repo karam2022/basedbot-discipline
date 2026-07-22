@@ -11,6 +11,9 @@ import { fileURLToPath } from 'node:url';
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const CONFIG_PATH = join(ROOT, 'config.json');
 const SEEN_PATH = join(ROOT, 'seen.json');
+// Canonical hot-logic config, shared with the extension (see the file's own
+// note). Read here and passed into scanPage so the watcher can't drift from it.
+const HOT_CONFIG_PATH = join(ROOT, '..', 'shared', 'hot-config.json');
 
 const loadJson = (path, fallback) => {
   try {
@@ -22,6 +25,11 @@ const loadJson = (path, fallback) => {
 };
 
 const config = loadJson(CONFIG_PATH, {});
+const HOT_CONFIG = loadJson(HOT_CONFIG_PATH, null);
+if (!HOT_CONFIG) {
+  console.error(`[watcher] missing ${HOT_CONFIG_PATH} — cannot score without the shared hot-config.`);
+  process.exit(1);
+}
 const CHAINS = config.chains || ['robinhood'];
 // Pages stay open (the feed live-updates over websocket); each interval is
 // just a DOM read, so short intervals are cheap.
@@ -74,16 +82,14 @@ const sendTelegram = async (text) => {
 // Runs inside the page. Mirrors extension: parse per-card stats
 // (holders, pro, top10, dev, snipers, bundlers, insiders, paid) + utility
 // score, return tokens passing every hot gate.
-const scanPage = () => {
-  const SW = { GitHub: 4, MCP: 4, Docs: 3, Medium: 1, YouTube: 1, Website: 1, Discord: 1 };
-  const PADS = ['Pons', 'bow.fun', 'Flap', 'Circus', 'Charms', 'Long.xyz', 'Bankr', 'Ape Store',
-    'Zora', 'Clanker', 'Flaunch', 'Stroid', 'Klik', 'Trench', 'Livo',
-    'Pump.fun', 'PumpFun', 'PumpSwap', 'Bags', 'Meteora DBC'];
-  const KW = ['pepe', 'inu', 'doge', 'shib', 'wif', 'bonk', 'elon', 'trump', 'moon', 'wojak',
-    'chad', 'frog', 'cat', 'dog', 'kitty', 'pup', 'baby', 'fart', 'butt', 'cum', 'tendies',
-    'rug', 'ape', 'monke', 'gigachad', 'meme'];
-  const AMB = ['cat', 'dog', 'ape', 'butt', 'baby', 'moon', 'pup', 'rug', 'cum', 'meme', 'chad'];
-  const GATES = { top10: 30, dev: 2, snipers: 15, bundlers: 15, insiders: 20, holders: 100 };
+const scanPage = (cfg) => {
+  // Config comes from shared/hot-config.json via evaluate — single source of
+  // truth with the extension (no more hand-mirrored lists drifting here).
+  const SW = cfg.socialWeights;
+  const PADS = cfg.memeBadges;
+  const KW = cfg.memeKeywords;
+  const AMB = cfg.ambiguousKeywords;
+  const GATES = cfg.hotGates;
 
   const addrOf = (h) => {
     // 0x… (case-insensitive hex) lowercased for stable keys; base58 Solana
@@ -143,7 +149,7 @@ const scanPage = () => {
       s.top10 <= GATES.top10 && s.dev <= GATES.dev &&
       s.snipers <= GATES.snipers && s.bundlers <= GATES.bundlers &&
       s.insiders <= GATES.insiders && s.holders >= GATES.holders &&
-      ratio >= 0.05 && ratio <= 0.6;
+      ratio >= GATES.minProRatio && ratio <= GATES.maxProRatio;
     if (!safetyPass) continue;
     // 🔥 = strong utility evidence; 💎 = safe + has website but thinner proof.
     const level = score >= 2 ? 'hot' : (titles.includes('Website') ? 'gem' : null);
@@ -259,7 +265,7 @@ const tick = async () => {
     for (const chain of CHAINS) {
       let result;
       try {
-        result = await pages.get(chain).evaluate(scanPage);
+        result = await pages.get(chain).evaluate(scanPage, HOT_CONFIG);
       } catch (err) {
         console.error(`[watcher] ${chain} page died (${err.message.slice(0, 60)}) — reopening`);
         try { await pages.get(chain)?.context().close(); } catch (e) { /* gone */ }
