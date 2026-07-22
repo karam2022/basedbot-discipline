@@ -174,20 +174,33 @@ BBD.filter = (() => {
     if (btn.title !== title) btn.title = title;
   };
 
-  // Compact per-card safety readout from the same card-visible stats the 🔥
-  // gate uses. LP-burn/lock and renounce aren't on cards (token page only), so
-  // the card verdict is deliberately a 7-check subset.
-  const cardChecks = (stats, s) => [
-    [`Top10 ≤${s.hotMaxTop10}%`, stats.top10 <= s.hotMaxTop10],
-    [`Dev ≤${s.hotMaxDev}%`, stats.dev <= s.hotMaxDev],
-    [`Snipers ≤${s.hotMaxSnipers}%`, stats.snipers <= s.hotMaxSnipers],
-    [`Bundlers ≤${s.hotMaxBundlers}%`, stats.bundlers <= s.hotMaxBundlers],
-    [`Insiders ≤${s.hotMaxInsiders}%`, stats.insiders <= s.hotMaxInsiders],
-    ['Dex Paid', stats.paid],
-    [`Holders ≥${s.hotMinHolders}`, stats.holders >= s.hotMinHolders]
-  ];
+  // Compact per-card safety readout. The 7 base checks come from card-visible
+  // stats (the same the 🔥 gate uses). LP-burn/lock and renounce aren't on
+  // cards — but intel.js caches them from the token panel, so for any token
+  // you've opened the card verdict upgrades to the full 9-check set (matching
+  // the token-page chip) rather than staying a subset.
+  const cardChecks = (stats, s, cached) => {
+    const checks = [
+      [`Top10 ≤${s.hotMaxTop10}%`, stats.top10 <= s.hotMaxTop10],
+      [`Dev ≤${s.hotMaxDev}%`, stats.dev <= s.hotMaxDev],
+      [`Snipers ≤${s.hotMaxSnipers}%`, stats.snipers <= s.hotMaxSnipers],
+      [`Bundlers ≤${s.hotMaxBundlers}%`, stats.bundlers <= s.hotMaxBundlers],
+      [`Insiders ≤${s.hotMaxInsiders}%`, stats.insiders <= s.hotMaxInsiders],
+      ['Dex Paid', stats.paid],
+      [`Holders ≥${s.hotMinHolders}`, stats.holders >= s.hotMinHolders]
+    ];
+    if (cached) {
+      if (typeof cached.lpBurned === 'number' || typeof cached.lpLocked === 'number') {
+        checks.push(['LP burned/locked', cached.lpBurned >= 50 || cached.lpLocked >= 50]);
+      }
+      if (cached.renounced === true || cached.renounced === false) {
+        checks.push(['Renounced', cached.renounced]);
+      }
+    }
+    return checks;
+  };
 
-  const ensureCardIntel = (card, stats, settings, show) => {
+  const ensureCardIntel = (card, stats, settings, cached, show) => {
     let el = card.querySelector('.bbd-cardintel');
     if (!show || !stats) {
       if (el && el.style.display !== 'none') el.style.display = 'none';
@@ -199,7 +212,7 @@ BBD.filter = (() => {
       card.style.position = 'relative';
       card.appendChild(el);
     }
-    const checks = cardChecks(stats, settings);
+    const checks = cardChecks(stats, settings, cached);
     const failed = checks.filter(([, v]) => v === false);
     const cls = `bbd-cardintel ${failed.length === 0 ? 'bbd-ci-good'
       : failed.length <= 2 ? 'bbd-ci-warn' : 'bbd-ci-bad'}`;
@@ -294,7 +307,9 @@ BBD.filter = (() => {
       // Warning marker is independent of hide/show: a held or user-kept token
       // stays visible but still shows its dev is a repeat offender.
       card.classList.toggle('bbd-baddev', badDev && state !== 'hide');
-      ensureCardIntel(card, stats, settings, settings.cardIntelEnabled && state !== 'hide');
+      // intel[addr] (cached token-panel scrape) adds LP-burn/lock + renounce to
+      // the card verdict for any token you've previously opened.
+      ensureCardIntel(card, stats, settings, intel[info.addr], settings.cardIntelEnabled && state !== 'hide');
       if (state === 'hide') hidden += 1;
       if (state === 'gem') gems += 1;
       if (state === 'hot') {
