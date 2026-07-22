@@ -13,11 +13,17 @@ BBD.DEFAULT_SETTINGS = Object.freeze({
   // Utility-score thresholds: hide below minScore, flag gems at gemMinScore.
   minScore: 2,
   gemMinScore: 4,
-  // Hard concentration filter: hide any token whose top-10 holders own more
-  // than this %, regardless of utility. High concentration = pre-loaded dump.
-  // Held tokens and explicit "always show" overrides are never hidden by it.
-  hideByTopHolder: true,
-  hideTopHolderPct: 40,
+  // Per-metric hard hide rules (see BBD.HIDE_METRICS). Each: hide any token
+  // whose stat exceeds the max %, regardless of utility. Held tokens and
+  // "always show" overrides are never hidden. top-10 on by default; the rest
+  // opt-in so the feed isn't suddenly gutted for people upgrading.
+  hide_top10_on: true, hide_top10_max: 40,
+  hide_insiders_on: false, hide_insiders_max: 20,
+  hide_bundlers_on: false, hide_bundlers_max: 30,
+  hide_snipers_on: false, hide_snipers_max: 30,
+  hide_dev_on: false, hide_dev_max: 10,
+  // Buy/sell tax ceiling — token-page 🛡 verdict only (tax isn't on the feed).
+  maxTaxPct: 10,
   // 🔥 best-guess highlight: card must pass every on-card safety metric AND
   // carry a utility signal. Thresholds derived from the profile shared by
   // verified runners (PONS, Index, wire) vs farms (RYFT: top10 82%, insiders 67%).
@@ -61,6 +67,17 @@ BBD.STALE_MS = 30 * 60 * 1000;   // position data older than this is labeled sta
 BBD.SCAN_DEBOUNCE_MS = 300;
 BBD.POLL_MS = 5000;
 BBD.ROUTE_POLL_MS = 1000;
+
+// Configurable per-metric hide rules. `stat` is the field name on parsed card
+// stats; `label` is the popup wording. Drives DEFAULT_SETTINGS keys
+// (hide_<key>_on / hide_<key>_max), the classify() loop, and the popup UI.
+BBD.HIDE_METRICS = Object.freeze([
+  { key: 'top10', stat: 'top10', label: 'Top-10 holders own >' },
+  { key: 'insiders', stat: 'insiders', label: 'Insiders own >' },
+  { key: 'bundlers', stat: 'bundlers', label: 'Bundlers own >' },
+  { key: 'snipers', stat: 'snipers', label: 'Snipers own >' },
+  { key: 'dev', stat: 'dev', label: 'Dev holds >' }
+]);
 
 // Short/ambiguous keywords need word boundaries so BUTTERCOIN doesn't match
 // "butt" or Catalyst "cat"; distinctive meme words still match as substrings

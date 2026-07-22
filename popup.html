@@ -43,11 +43,13 @@
   <label>Remind when up <input type="number" id="thresholdPct" min="1" max="1000" /> %</label>
   <label>Snooze length <input type="number" id="snoozeMin" min="1" max="240" /> min</label>
 
-  <h2>Concentration filter</h2>
-  <label><input type="checkbox" id="hideByTopHolder" /> Hide when top-10 holders own more than
-    <input type="number" id="hideTopHolderPct" min="1" max="100" style="width:52px" /> %</label>
-  <div class="hint">High concentration = pre-loaded dump. Applies even to tokens with a
-  website. Never hides coins you hold or marked "always show".</div>
+  <h2>Safety hide rules</h2>
+  <div id="hideRules"></div>
+  <div class="hint">Hide any token exceeding an enabled limit — applies even to
+  tokens with a website. Never hides coins you hold or marked "always show".</div>
+  <label style="margin-top:6px">🛡 Flag buy/sell tax over
+    <input type="number" id="maxTaxPct" min="0" max="100" style="width:52px" /> %
+    <span class="hint">(token page only — tax isn't on the feed)</span></label>
 
   <h2>Utility score</h2>
   <label>Hide tokens scoring below <input type="number" id="minScore" min="-10" max="10" /></label>

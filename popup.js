@@ -11,8 +11,12 @@ const DEFAULTS = {
   refireStepPct: 10,
   minScore: 2,
   gemMinScore: 4,
-  hideByTopHolder: true,
-  hideTopHolderPct: 40,
+  hide_top10_on: true, hide_top10_max: 40,
+  hide_insiders_on: false, hide_insiders_max: 20,
+  hide_bundlers_on: false, hide_bundlers_max: 30,
+  hide_snipers_on: false, hide_snipers_max: 30,
+  hide_dev_on: false, hide_dev_max: 10,
+  maxTaxPct: 10,
   hotEnabled: true,
   laptopHotAlerts: true,
   tgToken: '',
@@ -50,6 +54,53 @@ const saveSettings = async (patch) => {
   await chrome.storage.local.set({ settings: next });
   flash('Saved');
   return next;
+};
+
+// One row per hide metric (from BBD.HIDE_METRICS if present, else a static
+// mirror so the popup works standalone): [x] Label [max] %.
+const HIDE_METRICS = (self.BBD && BBD.HIDE_METRICS) || [
+  { key: 'top10', label: 'Top-10 holders own >' },
+  { key: 'insiders', label: 'Insiders own >' },
+  { key: 'bundlers', label: 'Bundlers own >' },
+  { key: 'snipers', label: 'Snipers own >' },
+  { key: 'dev', label: 'Dev holds >' }
+];
+
+const renderHideRules = (settings) => {
+  const wrap = $('hideRules');
+  wrap.innerHTML = '';
+  for (const m of HIDE_METRICS) {
+    const onKey = `hide_${m.key}_on`;
+    const maxKey = `hide_${m.key}_max`;
+    const row = document.createElement('label');
+    row.style.display = 'flex';
+    row.style.alignItems = 'center';
+    row.style.gap = '6px';
+
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = Boolean(settings[onKey]);
+    cb.addEventListener('change', () => saveSettings({ [onKey]: cb.checked }));
+
+    const txt = document.createElement('span');
+    txt.textContent = m.label;
+
+    const num = document.createElement('input');
+    num.type = 'number';
+    num.min = '1';
+    num.max = '100';
+    num.style.width = '52px';
+    num.value = settings[maxKey];
+    num.addEventListener('change', () => {
+      const v = Number(num.value);
+      if (v >= 1 && v <= 100) saveSettings({ [maxKey]: v });
+    });
+
+    const pct = document.createElement('span');
+    pct.textContent = '%';
+    row.append(cb, txt, num, pct);
+    wrap.appendChild(row);
+  }
 };
 
 const renderBadges = (settings) => {
@@ -104,20 +155,20 @@ const init = async () => {
     $(id).checked = Boolean(settings[id]);
     $(id).addEventListener('change', () => saveSettings({ [id]: $(id).checked }));
   }
-  for (const id of ['thresholdPct', 'snoozeMin', 'minScore', 'gemMinScore', 'hideTopHolderPct']) {
+  for (const id of ['thresholdPct', 'snoozeMin', 'minScore', 'gemMinScore', 'maxTaxPct']) {
     $(id).value = settings[id];
     $(id).addEventListener('change', () => {
       const value = Number($(id).value);
       const mustBePositive = id === 'thresholdPct' || id === 'snoozeMin';
       // gemMinScore floor: 0 would mark every visible token a gem (#7).
       if (id === 'gemMinScore' && value < 1) return;
-      // top-holder % must be a sane 1-100.
-      if (id === 'hideTopHolderPct' && !(value >= 1 && value <= 100)) return;
+      if (id === 'maxTaxPct' && !(value >= 0 && value <= 100)) return;
       if (Number.isFinite(value) && (!mustBePositive || value > 0)) {
         saveSettings({ [id]: value });
       }
     });
   }
+  renderHideRules(settings);
   for (const id of ['tgToken', 'tgChatId']) {
     $(id).value = settings[id] || '';
     $(id).addEventListener('change', () => saveSettings({ [id]: $(id).value.trim() }));

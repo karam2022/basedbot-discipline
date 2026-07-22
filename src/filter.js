@@ -121,11 +121,13 @@ BBD.filter = (() => {
     if (info.addr && positions[info.addr]) return positive; // held: never hide
     if (info.addr && overrides[info.addr] === 'show') return positive;
     if (info.addr && overrides[info.addr] === 'hide') return 'hide';
-    // Hard concentration filter: top-10 over the limit is a rug-risk hide that
-    // beats utility and gem status (a 🔥 can't reach here — it's gated ≤30%).
-    // Only fires when we actually have the stat; unknown never hides.
-    if (settings.hideByTopHolder && stats && typeof stats.top10 === 'number'
-      && stats.top10 > settings.hideTopHolderPct) {
+    // Per-metric hard hide rules: any enabled metric over its limit is a
+    // rug-risk hide that beats utility and gem status. Only fires when we have
+    // the stat; unknown never hides. (🔥 can't reach here — gated much lower.)
+    if (stats && BBD.HIDE_METRICS.some((m) =>
+      settings[`hide_${m.key}_on`] &&
+      typeof stats[m.stat] === 'number' &&
+      stats[m.stat] > settings[`hide_${m.key}_max`])) {
       return 'hide';
     }
     if (hot || gem) return positive;
