@@ -86,12 +86,13 @@ const tg = async (method, payload) => {
 
 let tgFirehoseChatId = config.tgFirehoseChatId || '';
 let tgTrackingChatId = config.tgTrackingChatId || '';
+let tgQualityChatId = config.tgQualityChatId || ''; // defaults to the owner DM
 // dest: 'quality' (default, your main chat) or 'firehose' (high-volume tiers).
 // Without a firehose chat configured, everything goes to the main chat.
 const sendTelegram = async (text, buttons, dest = 'quality') => {
   const chat = dest === 'firehose' && tgFirehoseChatId ? tgFirehoseChatId
     : dest === 'tracking' && tgTrackingChatId ? tgTrackingChatId
-      : tgChatId;
+      : (tgQualityChatId || tgChatId);
   if (!TG_TOKEN || !chat) return false;
   const payload = { chat_id: chat, text, disable_web_page_preview: true };
   if (buttons) payload.reply_markup = { inline_keyboard: buttons };
@@ -121,7 +122,7 @@ const pollUpdates = async () => {
       // in a private chat, chat id == user id, so tgChatId doubles as owner id.
       const fromOwner = String(u.message.from && u.message.from.id) === String(tgChatId);
       const cmd0 = txt.split(/\s+/)[0].split('@')[0];
-      const isBindCmd = cmd0 === '/firehose' || cmd0 === '/tracking';
+      const isBindCmd = cmd0 === '/firehose' || cmd0 === '/tracking' || cmd0 === '/quality';
       if (!bound && !(isBindCmd && fromOwner)) continue;
       const reply = (text) => tg('sendMessage', { chat_id: u.message.chat.id, text });
       const [cmdRaw, ...args] = txt.split(/\s+/);
@@ -149,6 +150,13 @@ const pollUpdates = async () => {
         await reply(`🔔 Watchwords: ${Object.keys(words).join(', ') || '(none — add with /watch TOKEN)'}`);
         continue;
       }
+    }
+    if (u.message && u.message.chat && txt.split('@')[0] === '/quality') {
+      tgQualityChatId = String(u.message.chat.id);
+      saveJson(CONFIG_PATH, { ...config, tgChatId, tgFirehoseChatId, tgTrackingChatId, tgQualityChatId });
+      await tg('sendMessage', { chat_id: tgQualityChatId, text: '🏆 This chat is now QUALITY — the rare, high-conviction alerts land here: 🔥 best guesses, 🌱👑 strict utility, strong 💎, and 🔔 your watchwords. Expect a handful a day, not a stream.' });
+      console.log(`[watcher] quality chat bound: ${tgQualityChatId}`);
+      continue;
     }
     if (u.message && u.message.chat && txt.split('@')[0] === '/tracking') {
       tgTrackingChatId = String(u.message.chat.id);
