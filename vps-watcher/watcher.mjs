@@ -10,8 +10,6 @@
 'use strict';
 
 import { chromium } from 'playwright';
-import { appendFileSync } from 'node:fs';
-import { createPaperTrader, summarize } from './paper.mjs';
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -23,14 +21,6 @@ const NAMES_PATH = join(ROOT, 'names.json');     // replica registry
 const TRACKED_PATH = join(ROOT, 'tracked.json'); // user-tracked tokens
 const OFFSET_PATH = join(ROOT, 'tg-offset.json');
 const WATCH_PATH = join(ROOT, 'watchwords.json'); // { word: { ts } }
-const PAPER_POS_PATH = join(ROOT, 'paper-positions.json');
-const PAPER_LOG_PATH = join(ROOT, 'paper-trades.jsonl');
-const appendLine = (path, line) => appendFileSync(path, line + '\n');
-const readTrades = (path) => {
-  try {
-    return readFileSync(path, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
-  } catch (e) { return []; }
-};
 // Canonical hot-logic config, shared with the extension (memeBadges/keywords/
 // socialWeights/hotGates). Read here so the watcher can't drift from the
 // extension — test/config-sync.test.js fails if the JSON and constants diverge.
@@ -73,13 +63,9 @@ const CHAIN_IDS = { robinhood: 4663, base: 8453, ethereum: 1, solana: 0 };
 
 if (!TG_TOKEN) console.error('[watcher] tgToken missing in config.json — alerts will NOT send.');
 
-// Paper-trading harness — logs the trades the discipline strategy WOULD make.
-// Zero money, zero wallet, zero execution.
-const paper = createPaperTrader({
-  loadJson, saveJson, appendLine, readTrades,
-  posPath: PAPER_POS_PATH, logPath: PAPER_LOG_PATH,
-  settings: config.paper || {}
-});
+// Optional local plugin: if a plugin.mjs sits alongside this file, load it and
+// forward scan events. Not shipped in the repo — a private extension point.
+let plugin = null;
 
 // ---------------------------------------------------------------- telegram --
 const tg = async (method, payload) => {
@@ -157,18 +143,7 @@ const pollUpdates = async () => {
         await reply(`Watchlist now: ${Object.keys(words).join(', ') || '(empty)'}`);
         continue;
       }
-      if (cmd === '/paper') {
-        const trades = readTrades(PAPER_LOG_PATH);
-        const sum = summarize(trades);
-        const open = Object.values(paper.positions());
-        if (!sum.trades) {
-          await reply(`📝 Paper trading: 0 closed trades yet, ${open.length} open. This logs the trades the 🔥 strategy WOULD make — no money, no wallet. Give it time to accumulate a sample.`);
-        } else {
-          const verdict = sum.beatsZero ? '✅ beats zero (so far)' : '❌ underwater (so far)';
-          await reply(`📝 Paper-trade report — ${verdict}\n${sum.trades} closed · ${open.length} open\nwin rate ${sum.winRatePct}% · avg ${sum.avgReturnPct > 0 ? '+' : ''}${sum.avgReturnPct}% · median ${sum.medianReturnPct}%\nbest +${sum.bestPct}% · worst ${sum.worstPct}% · avg hold ${sum.avgHoldMin}min\n${sum.liveMarkPct}% of marks on live feed prices (rest metadata fallback)\nSlippage-adjusted. Not money — a test of whether the machine beats zero.`);
-        }
-        continue;
-      }
+      if (plugin && plugin.onCommand && await plugin.onCommand(cmd, args, reply)) continue;
       if (cmd === '/watchlist') {
         const words = loadJson(WATCH_PATH, {});
         await reply(`🔔 Watchwords: ${Object.keys(words).join(', ') || '(none — add with /watch TOKEN)'}`);
@@ -383,23 +358,6 @@ const fetchMetadata = async (chain, addrs) => {
     console.error(`[watcher] metadata fetch failed on ${chain}:`, err.message.slice(0, 60));
     return {};
   }
-};
-
-// Native-token USD price from /api/prices (for metadata-derived MC fallback).
-const ethPriceCache = { ts: 0, val: null };
-const fetchEthUsd = async (chain) => {
-  if (Date.now() - ethPriceCache.ts < 60000 && ethPriceCache.val) return ethPriceCache.val;
-  const page = pages.get(chain);
-  if (!page) return null;
-  try {
-    const v = await page.evaluate(async () => {
-      const r = await fetch('/api/prices', { credentials: 'include' });
-      const j = await r.json().catch(() => null);
-      return j && j.prices && j.prices.ETH;
-    });
-    if (v > 0) { ethPriceCache.ts = Date.now(); ethPriceCache.val = v; }
-    return v || null;
-  } catch (e) { return null; }
 };
 
 // Website peek: the project describing itself. Title + meta description go
@@ -766,50 +724,13 @@ const tick = async () => {
           else if (x.tier === 'gem' && socialScore(x.card) >= 4) dest = 'quality';
           const crown = freshStrict ? ' 👑' : '';
           await alertToken(chain, x.card, x.tier, (x.upgraded ? ' — upgraded from 💎' : '') + crown, dest);
-          if (x.tier === 'hot') {
-            const entryMc = moneyNum(x.card.mc);
-            const r = paper.open(x.card.addr, chain, x.card.symbol || x.card.addr.slice(0, 6), entryMc, x.card.stats);
-            if (r && r.opened) console.log(`[watcher] 📝 paper-opened ${x.card.symbol} @ MC ${x.card.mc}`);
-          }
+          if (plugin && plugin.onSignal) { try { plugin.onSignal(chain, x.card, x.tier); } catch (e) { /* plugin errors never break alerts */ } }
           seen[key] = { ts: Date.now() };
           saveJson(SEEN_PATH, seen); // persist per-send: crash must not re-alert
         }
       }
     }
-    // ---- paper-trade marking: live feed MC first, metadata fallback --------
-    if (Object.keys(paper.positions()).length) {
-      const marks = {};
-      for (const chain of CHAINS) {
-        try {
-          const r = await pages.get(chain).evaluate(scanPage);
-          for (const c of r.cards) {
-            if (!c.addr) continue;
-            const mc = (function m(t){const x=(t||'').replace(/[$,]/g,'').match(/^([\d.]+)([KMB])?$/i);if(!x)return null;const u={K:1e3,M:1e6,B:1e9}[(x[2]||'').toUpperCase()]||1;return Number(x[1])*u;})(c.mc);
-            if (mc > 0) marks[c.addr] = { mc, holders: c.stats && c.stats.holders, source: 'feed' };
-          }
-        } catch (e) { /* page busy — fallback below covers it */ }
-      }
-      // metadata fallback for open positions not on any feed right now
-      const missing = Object.keys(paper.positions()).filter((a) => !marks[a]);
-      if (missing.length) {
-        const byChain = {};
-        for (const a of missing) { const c = paper.positions()[a].chain; (byChain[c] = byChain[c] || []).push(a); }
-        for (const [chain, addrs] of Object.entries(byChain)) {
-          const meta = await fetchMetadata(chain, addrs);
-          const eth = await fetchEthUsd(chain);
-          for (const a of addrs) {
-            const m = meta[a.toLowerCase()];
-            if (m && m.price_native && m.total_supply && eth) {
-              marks[a] = { mc: Number(m.price_native) * Number(m.total_supply) * eth, source: 'meta' };
-            }
-          }
-        }
-      }
-      const closed = paper.mark(marks);
-      for (const t of closed) {
-        console.log(`[watcher] 📝 paper-closed ${t.symbol}: ${t.returnPct > 0 ? '+' : ''}${t.returnPct}% in ${t.holdMin}min (${t.exits.slice(-1)[0]})`);
-      }
-    }
+    if (plugin && plugin.onTick) { try { await plugin.onTick(); } catch (e) { console.error('[watcher] plugin.onTick failed', e.message.slice(0, 60)); } }
 
     // prune the replica registry
     const now = Date.now();
@@ -848,15 +769,17 @@ const heartbeat = async () => {
     `💓 Watcher alive — ${scanCount} scans across ${CHAINS.join('/')}; ` +
     `${Object.keys(seen).length} alerts sent, ${Object.keys(tracked).length} token(s) tracked. ` +
     `Silence means nothing qualified.`);
-  const sum = summarize(readTrades(PAPER_LOG_PATH));
-  if (sum.trades) {
-    await sendTelegram(`📝 Paper strategy: ${sum.trades} closed trades, win rate ${sum.winRatePct}%, avg ${sum.avgReturnPct > 0 ? '+' : ''}${sum.avgReturnPct}% (slippage-adjusted). ${sum.beatsZero ? '✅ beats zero' : '❌ underwater'}. /paper for detail.`, null, 'tracking');
-  }
+  if (plugin && plugin.onHeartbeat) { try { await plugin.onHeartbeat(); } catch (e) { /* */ } }
   scanCount = 0;
 };
 
 console.log(`[watcher] v2 started — chains: ${CHAINS.join(', ')}, scan ${INTERVAL_MS / 1000}s, band $${BAND_MIN / 1000}K–$${BAND_MAX / 1000}K, fresh ≤${NEW_MAX_AGE_MIN}min, exit watch ${EXIT_CHECK_MS / 60000}min`);
 await start();
+try {
+  const mod = await import('./plugin.mjs');
+  plugin = mod.create ? mod.create({ pages, CHAINS, CHAIN_IDS, scanPage, fetchMetadata, sendTelegram, config }) : null;
+  if (plugin) console.log('[watcher] local plugin loaded');
+} catch (e) { /* no plugin present — normal for the public build */ }
 await tick();
 setInterval(() => { scanCount += 1; tick(); }, INTERVAL_MS);
 setInterval(reloadAll, RELOAD_MS);
