@@ -117,7 +117,8 @@ const pollUpdates = async () => {
       // Commands only from bound chats — anyone can message a bot, and the
       // watchlist must not be writable by strangers. (/firehose is exempt:
       // binding a new chat is the one command that must work from anywhere.)
-      const bound = fromChat === String(tgChatId) || fromChat === String(tgFirehoseChatId);
+      const bound = [tgChatId, tgFirehoseChatId, tgTrackingChatId, tgQualityChatId]
+        .some((id) => id && fromChat === String(id));
       // /firehose may come from a new (unbound) group, but only from the OWNER:
       // in a private chat, chat id == user id, so tgChatId doubles as owner id.
       const fromOwner = String(u.message.from && u.message.from.id) === String(tgChatId);
