@@ -9,6 +9,7 @@ BBD.dump = (() => {
   const seen = new Set(); // tx_hash already alerted this session
   const MAX_POSITIONS = 8; // cap active polling
   const MAX_SEEN = 5000;
+  const warnedClientErrors = new Set(); // addr already diagnosed this session
   let cursor = 0;
 
   // Pure: which recent sells in this trade list are a dev sell or a whale sell.
@@ -74,10 +75,25 @@ BBD.dump = (() => {
       if (seen.size > MAX_SEEN) seen.clear();
       for (const pos of selected) {
         const addr = pos.addr;
+        const pool = BBD.feed.poolFor(addr);
+        if (!pool || !pool.pool) continue;
+        const params = new URLSearchParams();
+        const chain = pool.chain || pos.chain;
+        if (chain) params.set('chain', chain);
+        params.set('pool', pool.pool);
         let trades;
         try {
-          const res = await fetch(`/api/token/${addr}/trades`, { credentials: 'same-origin' });
-          if (!res.ok) continue;
+          const res = await fetch(`/api/token/${addr}/trades?${params}`, {
+            credentials: 'same-origin'
+          });
+          if (!res.ok) {
+            const failureKey = addr.startsWith('0x') ? addr.toLowerCase() : addr;
+            if (res.status >= 400 && res.status < 500 && !warnedClientErrors.has(failureKey)) {
+              warnedClientErrors.add(failureKey);
+              console.warn(`[bbd] dump trades request failed for ${addr}: ${res.status}`);
+            }
+            continue;
+          }
           const json = await res.json();
           trades = json && json.data;
         } catch (e) {

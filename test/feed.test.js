@@ -206,3 +206,58 @@ test('balances: tokens flatten to positionKey-keyed held positions', () => {
   assert.equal(p.wallet, wallet);
   assert.equal(p.positionKey, BBD.positionKey(token, 'robinhood', wallet));
 });
+
+test('pool bridge entries are normalized and returned without a short TTL', (t) => {
+  const realNow = Date.now;
+  t.after(() => { Date.now = realNow; });
+  Date.now = () => 5000;
+  const addr = '0xABCDEF1111111111111111111111111111111111';
+  const pool = '0x5555555555555555555555555555555555555555';
+
+  send('pool', { addr, pool, chain: '4663' });
+
+  assert.deepEqual(F.poolFor(addr.toLowerCase()), { pool, chain: '4663', ts: 5000 });
+  Date.now = () => 5000 + (365 * 24 * 60 * 60 * 1000);
+  assert.equal(F.poolFor(addr).pool, pool);
+  assert.equal(F.poolFor('0x6666666666666666666666666666666666666666'), null);
+});
+
+test('malformed or absent pool bridge fields create no entry', () => {
+  const missing = '0x7777777777777777777777777777777777777777';
+  const malformedPool = '0x8888888888888888888888888888888888888888';
+  const malformedChain = '0x9999999999999999999999999999999999999999';
+  const missingChain = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+
+  send('pool', { addr: missing, chain: '4663' });
+  send('pool', { addr: malformedPool, pool: 'bad pool', chain: '4663' });
+  send('pool', {
+    addr: missingChain,
+    pool: '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+  });
+  send('pool', {
+    addr: malformedChain,
+    pool: '0xcccccccccccccccccccccccccccccccccccccccc',
+    chain: 'bad chain'
+  });
+
+  assert.equal(F.poolFor(missing), null);
+  assert.equal(F.poolFor(malformedPool), null);
+  assert.equal(F.poolFor(missingChain), null);
+  assert.equal(F.poolFor(malformedChain), null);
+});
+
+test('balances defensively accept a usable candidate pool id', () => {
+  const wallet = '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+  const token = '0xcccccccccccccccccccccccccccccccccccccccc';
+  const pool = '0xdddddddddddddddddddddddddddddddddddddddd';
+
+  send('balances', [{ walletAddress: wallet, tokens: [{
+    token,
+    pool: { chain: 4663, pool_address: pool },
+    pnl: { relative: 1, absolute: 1 },
+    valueUsd: 2
+  }] }]);
+
+  assert.equal(F.poolFor(token).pool, pool);
+  assert.equal(F.poolFor(token).chain, '4663');
+});

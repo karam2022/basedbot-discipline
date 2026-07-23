@@ -10,14 +10,20 @@ that chart.
 The live price/swap stream on basedbot flows through a Web Worker (the chart is
 TradingView), and the only main-thread signals are `[PerfDiag]` telemetry
 (batch sizes, timings — no prices or swap amounts). So the WebSocket path isn't
-reliably tappable. The REST endpoint `/api/token/{addr}/trades` carries the
-actual trades and is same-origin, so `src/dump.js` fetches it directly.
+reliably tappable. The REST endpoint
+`/api/token/{addr}/trades?chain={chain}&pool={poolId}` carries the actual trades
+and is same-origin, so `src/dump.js` fetches it directly.
 
 ## How it works
 
 - `main.js` runs `dump.tick()` every 20 s.
 - It checks up to 8 held positions per tick and rotates the cursor, so larger
   portfolios are fully covered over successive ticks.
+- The required pool id is learned from the page's own trade request when a
+  token page is opened. A balances payload can supply it sooner if its
+  unverified `pool` object contains a validated id. Until either source supplies
+  one, that token is skipped instead of sending a request that is guaranteed to
+  fail.
 - `detect(trades, { creatorAddr, whaleSellUsd, now, windowMs })` returns the
   recent **sells** (`is_buy === false`, within `dumpWindowMin`) that are either
   a **dev sell** (`trader_full === creatorAddr`, from `BBD.feed.creatorFor`) or a
@@ -26,6 +32,8 @@ actual trades and is same-origin, so `src/dump.js` fetches it directly.
 - Each hit alerts once (deduped by `tx_hash`; the recency window means a reload
   never re-alerts old dumps) via the background worker → Chrome notification +
   Telegram.
+- A client error from the trade endpoint is logged once per token with the
+  `[bbd]` prefix for diagnosis; server and network errors quietly retry.
 
 Trade shape used (per row): `trader_full`, `is_buy`, `volume_usd`, `timestamp`
 (UTC `YYYY-MM-DD HH:MM:SS`), `tx_hash`.

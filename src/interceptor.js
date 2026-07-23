@@ -66,6 +66,13 @@
   const post = (kind, data) => {
     const msg = { __bbd: 'api', kind, data };
     if (kind !== 'tick') {
+      // The page polls one tape repeatedly; retain only its newest mapping so
+      // stable pool ids cannot crowd load-time batches out of the replay buffer.
+      if (kind === 'pool') {
+        const prior = buffer.findIndex((item) =>
+          item.kind === 'pool' && item.data && item.data.addr === data.addr);
+        if (prior >= 0) buffer.splice(prior, 1);
+      }
       buffer.push(msg);
       if (buffer.length > MAX_BUFFER) buffer.shift();
     }
@@ -87,7 +94,16 @@
       const url = typeof input === 'string' ? input
         : input instanceof Request ? input.url
           : input instanceof URL ? input.href : '';
-      const path = new URL(url, location.origin).pathname;
+      const parsedUrl = new URL(url, location.origin);
+      const path = parsedUrl.pathname;
+      const trades = path.match(/^\/api\/token\/(0x[a-fA-F0-9]{6,}|[1-9A-HJ-NP-Za-km-z]{20,})\/trades$/);
+      if (trades) {
+        const pool = parsedUrl.searchParams.get('pool');
+        const chain = parsedUrl.searchParams.get('chain');
+        const validPool = typeof pool === 'string' && /^[a-zA-Z0-9:_-]{1,200}$/.test(pool);
+        const validChain = typeof chain === 'string' && /^[a-zA-Z0-9_-]{1,64}$/.test(chain);
+        if (validPool && validChain) post('pool', { addr: trades[1], pool, chain });
+      }
       const hit = WATCHED.find(([re]) => re.test(path));
       if (hit) {
         const kind = hit[1];

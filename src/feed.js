@@ -16,6 +16,7 @@ BBD.feed = (() => {
   const ticks = new Map();   // addr -> { priceUsd, mcapUsd, ts }
   const audit = new Map();   // addr -> { danger, critical, ownerRenounced, reasons, ts }
   const balances = new Map(); // positionKey -> validated held-position snapshot
+  const pools = new Map();   // addr -> { pool, chain, ts }
   let balancesSeen = false;
   let balancesTs = 0;
   let prices = {};           // { ETH: number, SOL: number, ... }
@@ -43,6 +44,13 @@ BBD.feed = (() => {
   };
   // creatorAddress / token address share the EVM-lowercase, base58-preserve rule.
   const isAddr = (v) => typeof v === 'string' && /^(0x[a-fA-F0-9]{6,}|[1-9A-HJ-NP-Za-km-z]{20,})$/.test(v);
+  const poolId = (v) =>
+    typeof v === 'string' && /^[a-zA-Z0-9:_-]{1,200}$/.test(v) ? v : null;
+  const chainId = (v) => {
+    if (typeof v !== 'string' && !Number.isSafeInteger(v)) return null;
+    const chain = String(v).toLowerCase();
+    return /^[a-z0-9_-]{1,64}$/.test(chain) ? chain : null;
+  };
 
   // The stream body has not been captured yet. Every spelling below is an
   // unverified candidate; an unknown shape must miss cleanly until a real
@@ -235,6 +243,30 @@ BBD.feed = (() => {
     prune(audit);
   };
 
+  const rememberPool = (addr, poolRaw, chainRaw, replace) => {
+    if (!isAddr(addr)) return;
+    const pool = poolId(poolRaw);
+    const chain = chainRaw === null || chainRaw === undefined ? null : chainId(chainRaw);
+    if (!pool || (chainRaw !== null && chainRaw !== undefined && !chain)) return;
+    const key = normAddr(addr);
+    const current = pools.get(key);
+    // The URL is verified; an unverified balance candidate may only fill a
+    // miss, or add a chain to the same pool without replacing URL evidence.
+    if (!replace && current) {
+      if (current.pool === pool && !current.chain && chain) {
+        pools.set(key, { pool, chain, ts: Date.now() });
+      }
+      return;
+    }
+    pools.set(key, { pool, chain, ts: Date.now() });
+    prune(pools);
+  };
+
+  const takePool = (data) => {
+    if (!data || typeof data !== 'object' || data.chain === null || data.chain === undefined) return;
+    rememberPool(data.addr, data.pool, data.chain, true);
+  };
+
   // Wallet holdings (/api/v1/balances): the authoritative position list with
   // accurate unrealized PnL — pnl.js uses this over fragile DOM scraping. Each
   // token: { token, symbol, valueUsd, pnl:{ relative(%), absolute($) }, pool }.
@@ -251,8 +283,17 @@ BBD.feed = (() => {
         const addr = normAddr(t.token);
         const rel = t.pnl && Number(t.pnl.relative);
         const abs = t.pnl && Number(t.pnl.absolute);
-        const chainRaw = (t.pool && t.pool.chain) || t.network;
-        const chain = typeof chainRaw === 'string' ? chainRaw.toLowerCase() : null;
+        const poolData = t.pool && typeof t.pool === 'object' && !Array.isArray(t.pool)
+          ? t.pool : null;
+        const chainRaw = (poolData && poolData.chain) || t.network;
+        const chain = chainId(chainRaw);
+        // The balance pool shape is unverified, so accept only a candidate that
+        // validates as an opaque id and never replace the observed request URL.
+        if (poolData) {
+          const fields = ['id', 'address', 'pool', 'poolId', 'pool_address'];
+          const candidate = fields.map((field) => poolId(poolData[field])).find(Boolean);
+          if (candidate) rememberPool(addr, candidate, chain, false);
+        }
         const positionKey = BBD.positionKey(addr, chain, wallet);
         next.set(positionKey, {
           positionKey,
@@ -284,6 +325,7 @@ BBD.feed = (() => {
     else if (msg.kind === 'audit') takeAudit(msg.data);
     else if (msg.kind === 'balances') takeBalances(msg.data);
     else if (msg.kind === 'tick') takeTick(msg.data);
+    else if (msg.kind === 'pool') takePool(msg.data);
   });
   // The load-time batches fired before this listener existed.
   window.postMessage({ __bbd: 'replay-request' }, location.origin);
@@ -314,9 +356,13 @@ BBD.feed = (() => {
   const hasBalances = () => balancesSeen;
   const hasFreshBalances = () => balancesSeen && Date.now() - balancesTs < BBD.BALANCES_TTL_MS;
   const balancesUpdatedAt = () => balancesTs || null;
+  // Pool ids are routing facts that stay stable for a token; keep them without
+  // a TTL so opening a token once can enable later held-position polling.
+  const poolFor = (addr) => (addr && pools.get(normAddr(addr))) || null;
 
   return {
     statsFor, titlesFor, creatorFor, marketFor, auditFor, priceOf, ethPrice,
-    tickFor, adaptTick, heldPositions, hasBalances, hasFreshBalances, balancesUpdatedAt
+    tickFor, adaptTick, heldPositions, hasBalances, hasFreshBalances, balancesUpdatedAt,
+    poolFor
   };
 })();

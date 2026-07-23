@@ -133,3 +133,35 @@ test('streamed ticks never enter the replay buffer', () => {
   dispatchWindowMessage({ __bbd: 'replay-request' });
   assert.equal(posts.length, 50, 'a replayed price is stale — ticks must not replay');
 });
+
+test('a trades URL posts its pool mapping and ignores maker filtering', () => {
+  const { posts } = setup();
+  const addr = '0x1111111111111111111111111111111111111111';
+  const pool = '0x2222222222222222222222222222222222222222';
+  window.fetch(`/api/token/${addr}/trades?chain=4663&pool=${pool}&maker=0xaaaa%2C0xbbbb`);
+
+  assert.deepEqual(posts, [{
+    msg: {
+      __bbd: 'api',
+      kind: 'pool',
+      data: { addr, pool, chain: '4663' }
+    },
+    origin: 'https://basedbot.app'
+  }]);
+  assert.equal(Object.hasOwn(posts[0].msg.data, 'maker'), false);
+});
+
+test('non-trades and malformed trades URLs post no pool mapping', () => {
+  const { posts } = setup();
+  const addr = '0x3333333333333333333333333333333333333333';
+  const pool = '0x4444444444444444444444444444444444444444';
+
+  window.fetch(`/api/token/${addr}/holders?chain=4663&pool=${pool}`);
+  window.fetch(`/api/token/${addr}/trades`);
+  window.fetch(`/api/token/${addr}/trades?pool=${pool}`);
+  window.fetch(`/api/token/${addr}/trades?chain=4663&pool=`);
+  window.fetch(`/api/token/${addr}/trades?chain=bad%20chain&pool=${pool}`);
+  window.fetch(`/api/token/not-an-address/trades?chain=4663&pool=${pool}`);
+
+  assert.equal(posts.length, 0);
+});
