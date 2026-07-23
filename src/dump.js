@@ -11,12 +11,6 @@ BBD.dump = (() => {
   const MAX_SEEN = 5000;
   let cursor = 0;
 
-  // Server timestamps are "YYYY-MM-DD HH:MM:SS" in UTC.
-  const parseTs = (s) => {
-    const t = new Date(`${String(s).replace(' ', 'T')}Z`).getTime();
-    return Number.isNaN(t) ? null : t;
-  };
-
   // Pure: which recent sells in this trade list are a dev sell or a whale sell.
   const detect = (trades, { creatorAddr, whaleSellUsd, now, windowMs }) => {
     const dev = creatorAddr ? String(creatorAddr) : null;
@@ -29,7 +23,7 @@ BBD.dump = (() => {
     const out = [];
     for (const t of Array.isArray(trades) ? trades : []) {
       if (!t || t.is_buy !== false) continue; // sells only
-      const ts = parseTs(t.timestamp);
+      const ts = BBD.parseTradeTimestamp(t.timestamp);
       if (windowMs && (ts === null || now - ts > windowMs || ts - now > 60 * 1000)) continue;
       const vol = Number(t.volume_usd);
       const volumeUsd = Number.isFinite(vol) && vol >= 0 ? vol : 0;

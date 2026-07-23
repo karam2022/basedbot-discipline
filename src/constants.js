@@ -219,6 +219,26 @@ BBD.localDayKey = (date = new Date()) => {
   return `${y}-${m}-${d}`;
 };
 
+// Tape timestamps omit both the "T" and timezone marker even though the API
+// emits UTC. Parsing the components explicitly avoids local-time drift and
+// Date's silent rollover of impossible dates.
+BBD.parseTradeTimestamp = (value) => {
+  if (typeof value !== 'string') return null;
+  const m = value.match(/^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})$/);
+  if (!m) return null;
+  const parts = m.slice(1).map(Number);
+  const ts = Date.UTC(parts[0], parts[1] - 1, parts[2], parts[3], parts[4], parts[5]);
+  if (!Number.isFinite(ts)) return null;
+  const d = new Date(ts);
+  return d.getUTCFullYear() === parts[0] &&
+    d.getUTCMonth() === parts[1] - 1 &&
+    d.getUTCDate() === parts[2] &&
+    d.getUTCHours() === parts[3] &&
+    d.getUTCMinutes() === parts[4] &&
+    d.getUTCSeconds() === parts[5]
+    ? ts : null;
+};
+
 // Page-controlled text (token symbols/names) goes into Telegram messages and
 // notification titles. Strip anything that could turn our own alert channel
 // into a phishing surface: URLs, handles, control/RTL-override chars (#8).
