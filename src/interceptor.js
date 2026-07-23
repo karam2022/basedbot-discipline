@@ -1,4 +1,4 @@
-// MAIN-world fetch tap. The SPA receives every card stat as JSON
+// MAIN-world fetch / WebSocket tap. The SPA receives every card stat as JSON
 // (/api/tokens/metrics/batch: top10/dev/snipers/bundlers/insiders/holders/
 // dexPaid) and every social link (/api/tokens/metadata*). Reading those
 // payloads is immune to layout redesigns that silently break positional
@@ -16,6 +16,17 @@
     [/\/api\/audit\/batch$/, 'audit'], // streamed audit objects (contract + hook safety)
     [/\/api\/v1\/balances$/, 'balances'] // wallet holdings + unrealized PnL per token
   ];
+
+  // Chain-specific stream names can change; the BasedBot + Mobula hostname
+  // relationship is the stable boundary, not today's sol suffix.
+  const isWatchedSocket = (url) => {
+    try {
+      const hostname = new URL(String(url), location.origin).hostname.toLowerCase();
+      return hostname.endsWith('.mobula.io') && hostname.includes('basedbot');
+    } catch (err) {
+      return false;
+    }
+  };
 
   // /api/audit/batch streams multiple JSON objects (NDJSON / concatenated),
   // ending with {done:true} — not a single JSON body. Pull out each balanced
@@ -49,10 +60,15 @@
   const buffer = [];
   const MAX_BUFFER = 40;
 
+  // Ticks stream continuously, so they never enter the buffer: a replayed price
+  // is stale by the time it lands, and buffering them would evict the load-time
+  // batches this buffer exists to preserve long before the replay request runs.
   const post = (kind, data) => {
     const msg = { __bbd: 'api', kind, data };
-    buffer.push(msg);
-    if (buffer.length > MAX_BUFFER) buffer.shift();
+    if (kind !== 'tick') {
+      buffer.push(msg);
+      if (buffer.length > MAX_BUFFER) buffer.shift();
+    }
     window.postMessage(msg, location.origin);
   };
 
@@ -97,4 +113,42 @@
     } catch (err) { /* never break the page's fetch */ }
     return promise;
   };
+
+  const origWS = window.WebSocket;
+  if (typeof origWS === 'function') {
+    const WebSocketTap = function WebSocket(url, protocols) {
+      const args = Array.prototype.slice.call(arguments);
+      if (!new.target) return Reflect.apply(origWS, this, args);
+      const sock = Reflect.construct(origWS, args, new.target);
+      if (isWatchedSocket(url)) {
+        let debugCount = 0;
+        try {
+          sock.addEventListener('message', (ev) => {
+            try {
+              if (typeof ev.data !== 'string') return;
+              try {
+                if (debugCount < 3 && window.localStorage.getItem('bbd-debug-ws') === '1') {
+                  debugCount += 1;
+                  console.debug('[bbd] WebSocket message', ev.data);
+                }
+              } catch (err) { /* debug mode must never affect the page */ }
+              let parsed;
+              try { parsed = JSON.parse(ev.data); } catch (err) { return; }
+              if (parsed && typeof parsed === 'object') post('tick', parsed);
+            } catch (err) { /* never break the page's message listener */ }
+          });
+        } catch (err) { /* never break the page's WebSocket */ }
+      }
+      return sock;
+    };
+    WebSocketTap.prototype = origWS.prototype;
+    Object.setPrototypeOf(WebSocketTap, Object.getPrototypeOf(origWS));
+    for (const key of Reflect.ownKeys(origWS)) {
+      if (key === 'prototype') continue;
+      try {
+        Object.defineProperty(WebSocketTap, key, Object.getOwnPropertyDescriptor(origWS, key));
+      } catch (err) { /* keep the wrapper's equivalent built-in property */ }
+    }
+    window.WebSocket = WebSocketTap;
+  }
 })();

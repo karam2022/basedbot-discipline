@@ -89,6 +89,69 @@ test('prices: numeric only, negatives and non-numbers rejected', () => {
   assert.equal(F.priceOf('NEG'), null);
 });
 
+test('tick: a valid candidate shape is normalised and returned while fresh', (t) => {
+  const realNow = Date.now;
+  t.after(() => { Date.now = realNow; });
+  Date.now = () => 1000;
+  const addr = '0xABCDEF1111111111111111111111111111111111';
+  send('tick', { address: addr, price_usd: 0.00125, market_cap_usd: 42000 });
+
+  assert.deepEqual(F.tickFor(addr), {
+    priceUsd: 0.00125,
+    mcapUsd: 42000,
+    ts: 1000
+  });
+  assert.deepEqual(F.tickFor(addr.toLowerCase()), F.tickFor(addr));
+});
+
+test('tick: a cached value returns null once its short TTL passes', (t) => {
+  const realNow = Date.now;
+  t.after(() => { Date.now = realNow; });
+  const addr = '0x2222222222222222222222222222222222222222';
+  Date.now = () => 2000;
+  send('tick', { tokenAddress: addr, priceUsd: 3, marketCapUsd: 90000 });
+  assert.equal(F.tickFor(addr).priceUsd, 3);
+
+  Date.now = () => 17001;
+  assert.equal(F.tickFor(addr), null);
+});
+
+test('tick: wrapped and array candidate shapes adapt without shape leakage', () => {
+  const addr = 'So11111111111111111111111111111111111111112';
+  assert.deepEqual(F.adaptTick([{ data: {
+    asset: addr, usd_price: 0.5, market_cap: 1234
+  } }]), {
+    addr, priceUsd: 0.5, mcapUsd: 1234
+  });
+  assert.deepEqual(F.adaptTick({ payload: {
+    token: addr, price: 0.75, mcap: 1500
+  } }), {
+    addr, priceUsd: 0.75, mcapUsd: 1500
+  });
+});
+
+test('tick: missing, non-finite, negative, and unknown prices are rejected', () => {
+  const addrs = [
+    '0x3000000000000000000000000000000000000000',
+    '0x4000000000000000000000000000000000000000',
+    '0x5000000000000000000000000000000000000000',
+    '0x6000000000000000000000000000000000000000',
+    '0x7000000000000000000000000000000000000000',
+    '0x8000000000000000000000000000000000000000'
+  ];
+  send('tick', { address: addrs[0], market_cap_usd: 1 });
+  send('tick', { address: addrs[1], price_usd: NaN });
+  send('tick', { address: addrs[2], price_usd: -1 });
+  send('tick', { address: addrs[3], price_usd: null });
+  send('tick', { address: addrs[4], last: 10 });
+  send('tick', { address: addrs[5], price_usd: true });
+  addrs.forEach((addr) => assert.equal(F.tickFor(addr), null));
+});
+
+test('adaptTick returns null for an unrecognised payload shape', () => {
+  assert.equal(F.adaptTick({ instrument: 'synthetic', lastUsd: 12.34 }), null);
+});
+
 test('audit: the real CHIPS token is flagged danger (owner can drain the pool)', () => {
   const chips = {
     chain: 4663, address: '0xf488d799d8bd6e4c875db014976549d745612847',

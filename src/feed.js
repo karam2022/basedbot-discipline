@@ -7,11 +7,13 @@
 BBD.feed = (() => {
   // Stats gate 🔥 alerts — stale values must lose to a fresh DOM parse.
   const STATS_TTL_MS = 10 * 60 * 1000;
+  const TICK_TTL_MS = 15 * 1000;
   const MAX_ENTRIES = 1500;
   const stats = new Map();   // addr -> { holders, pro, top10, ..., paid, ts }
   const titles = new Map();  // addr -> { list: ['Website', ...], ts }
   const creator = new Map(); // addr -> creatorAddress (for the creator guard)
   const market = new Map();  // addr -> { liq, mcap, isLaunchpad, symbol, ts }
+  const ticks = new Map();   // addr -> { priceUsd, mcapUsd, ts }
   const audit = new Map();   // addr -> { danger, critical, ownerRenounced, reasons, ts }
   const balances = new Map(); // positionKey -> validated held-position snapshot
   let balancesSeen = false;
@@ -41,6 +43,45 @@ BBD.feed = (() => {
   };
   // creatorAddress / token address share the EVM-lowercase, base58-preserve rule.
   const isAddr = (v) => typeof v === 'string' && /^(0x[a-fA-F0-9]{6,}|[1-9A-HJ-NP-Za-km-z]{20,})$/.test(v);
+
+  // The stream body has not been captured yet. Every spelling below is an
+  // unverified candidate; an unknown shape must miss cleanly until a real
+  // message confirms the adapter.
+  const adaptTick = (raw) => {
+    const addressFields = ['address', 'token_address', 'tokenAddress', 'asset', 'token']; // unverified
+    const priceFields = ['price_usd', 'priceUsd', 'price', 'usd_price']; // unverified
+    const mcapFields = ['market_cap_usd', 'marketCapUsd', 'mcap', 'market_cap']; // unverified
+    const queue = Array.isArray(raw) ? [...raw] : [raw];
+    const seen = new Set();
+    for (let i = 0; i < queue.length; i++) {
+      const item = queue[i];
+      if (!item || typeof item !== 'object' || seen.has(item)) continue;
+      seen.add(item);
+      if (Array.isArray(item)) {
+        queue.push(...item);
+        continue;
+      }
+      if (item.data && typeof item.data === 'object') queue.push(item.data);
+      if (item.payload && typeof item.payload === 'object') queue.push(item.payload);
+      const pick = (fields) => {
+        const key = fields.find((field) => Object.prototype.hasOwnProperty.call(item, field));
+        return key === undefined ? undefined : item[key];
+      };
+      const numberish = (v) =>
+        typeof v === 'number' || (typeof v === 'string' && v.trim() !== '');
+      const addr = pick(addressFields);
+      const priceRaw = pick(priceFields);
+      if (!isAddr(addr) || !numberish(priceRaw)) continue;
+      const priceUsd = usd(priceRaw);
+      if (priceUsd === null) continue;
+      const mcapRaw = pick(mcapFields);
+      if (mcapRaw !== undefined && !numberish(mcapRaw)) continue;
+      const mcapUsd = mcapRaw === undefined ? null : usd(mcapRaw);
+      if (mcapRaw !== undefined && mcapUsd === null) continue;
+      return { addr, priceUsd, mcapUsd };
+    }
+    return null;
+  };
 
   const prune = (map) => {
     if (map.size <= MAX_ENTRIES) return;
@@ -145,6 +186,17 @@ BBD.feed = (() => {
     if (Object.keys(next).length) prices = next;
   };
 
+  const takeTick = (data) => {
+    const tick = adaptTick(data);
+    if (!tick) return;
+    ticks.set(normAddr(tick.addr), {
+      priceUsd: tick.priceUsd,
+      mcapUsd: tick.mcapUsd,
+      ts: Date.now()
+    });
+    prune(ticks);
+  };
+
   // Reduce one token's audit block to a safety verdict. "danger" means funds
   // are at real risk: the token contract is flagged unsafe, or its hook carries
   // a critical vulnerability (owner can drain liquidity / trap LPs / levy hidden
@@ -231,6 +283,7 @@ BBD.feed = (() => {
     else if (msg.kind === 'prices') takePrices(msg.data);
     else if (msg.kind === 'audit') takeAudit(msg.data);
     else if (msg.kind === 'balances') takeBalances(msg.data);
+    else if (msg.kind === 'tick') takeTick(msg.data);
   });
   // The load-time batches fired before this listener existed.
   window.postMessage({ __bbd: 'replay-request' }, location.origin);
@@ -249,6 +302,11 @@ BBD.feed = (() => {
   const auditFor = (addr) => (addr && audit.get(addr)) || null;
   const priceOf = (sym) => (sym && prices[sym]) || null;
   const ethPrice = () => prices.ETH || null;
+  const tickFor = (addr) => {
+    if (!addr) return null;
+    const tick = ticks.get(normAddr(addr));
+    return tick && Date.now() - tick.ts < TICK_TTL_MS ? tick : null;
+  };
   // Held positions from the balances API. Freshness gates pnl.js switching off
   // DOM fallback — until the first fetch is tapped, "no positions" cannot be
   // distinguished from "not loaded yet".
@@ -259,6 +317,6 @@ BBD.feed = (() => {
 
   return {
     statsFor, titlesFor, creatorFor, marketFor, auditFor, priceOf, ethPrice,
-    heldPositions, hasBalances, hasFreshBalances, balancesUpdatedAt
+    tickFor, adaptTick, heldPositions, hasBalances, hasFreshBalances, balancesUpdatedAt
   };
 })();
