@@ -115,6 +115,7 @@ BBD.KEYS = Object.freeze({
   dismissed: 'dismissed', // { [positionKey]: pctAtDismissal }
   overrides: 'overrides', // { [addr]: 'hide' | 'show' }
   intel: 'intel',         // { [addr]: parsed Token Info metrics + ts }
+  advisor: 'advisor',     // { [addr]: { verdict, bucket, ts } } — short-lived AI verdicts
   alerted: 'alerted',     // { [addr]: ts } — 🔥 telegram dedupe, 24h TTL
   creators: 'creators',   // { [creatorAddr]: { tokens: { [addr]: {...} }, ts } }
   journal: 'journal',     // { [tradeId]: { positionKey, addr, openTs, closeTs, ... } }

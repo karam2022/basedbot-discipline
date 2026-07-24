@@ -115,6 +115,7 @@ BBD.dump = (() => {
           if (!hit.txHash || seen.has(hit.txHash)) continue;
           seen.add(hit.txHash);
           notify(pos, hit);
+          if (BBD.advisor) BBD.advisor.onDump(pos.addr);
         }
       }
     } catch (err) {

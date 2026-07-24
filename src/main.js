@@ -11,7 +11,8 @@
   const shutdown = () => {
     intervals.forEach(clearInterval);
     observer.disconnect();
-    ['bbd-filter-chip', 'bbd-banner', 'bbd-refresh', 'bbd-intel', 'bbd-fomo', 'bbd-guard-revenge']
+    ['bbd-filter-chip', 'bbd-banner', 'bbd-refresh', 'bbd-intel', 'bbd-advisor',
+      'bbd-advisor-btn', 'bbd-fomo', 'bbd-guard-revenge']
       .forEach((id) => document.getElementById(id)?.remove());
     document.querySelectorAll('.bbd-hidden, .bbd-gem, .bbd-hot, .bbd-baddev, .bbd-danger, .bbd-override, .bbd-cardintel')
       .forEach((el) => {
@@ -31,7 +32,8 @@
     BBD.filter.scan();
     BBD.pnl.scan();
     BBD.intel.scan();
-    BBD.banner.tick();
+    BBD.advisor.tick();
+    Promise.resolve(BBD.banner.tick()).then(() => BBD.advisor.onBannerTick());
     BBD.guard.tick();
   };
 
@@ -77,12 +79,13 @@
     }
   }), BBD.ROUTE_POLL_MS));
 
-  // Regular PnL + intel + banner + guard refresh.
+  // Regular PnL + intel + advisor + banner + guard refresh.
   intervals.push(setInterval(guard(() => {
     ensureRefreshBtn();
     BBD.pnl.scan();
     BBD.intel.scan();
-    BBD.banner.tick();
+    BBD.advisor.tick();
+    Promise.resolve(BBD.banner.tick()).then(() => BBD.advisor.onBannerTick());
     BBD.guard.tick();
   }), BBD.POLL_MS));
 

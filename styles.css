@@ -220,6 +220,130 @@ a[href*="/token/"]:hover .bbd-override,
   border: 1px solid #ef4444;
 }
 
+/* 🤖 Token-page AI risk read. The button sits beside the 🛡 chip when the
+   viewport has room; advisor.js moves the same owned node just above it when
+   the full card would overflow. */
+#bbd-advisor {
+  position: fixed;
+  left: 16px;
+  bottom: 104px;
+  z-index: 2147483000;
+  display: none;
+  width: min(420px, calc(100vw - 32px));
+  box-sizing: border-box;
+  color: #e5e7eb;
+  font: 500 12px/1.45 system-ui, sans-serif;
+}
+#bbd-advisor-btn {
+  appearance: none;
+  background: rgba(17, 24, 39, 0.92);
+  color: #c4b5fd;
+  border: 1px solid #8b5cf6;
+  border-radius: 999px;
+  padding: 7px 13px;
+  font: 700 12px/1.4 system-ui, sans-serif;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.45);
+}
+#bbd-advisor-btn:hover {
+  color: #ede9fe;
+  border-color: #a78bfa;
+}
+#bbd-advisor-btn:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+#bbd-advisor .bbd-advisor-output:not(:empty) {
+  margin-top: 7px;
+}
+#bbd-advisor .bbd-advisor-card,
+#bbd-advisor .bbd-advisor-pending,
+#bbd-advisor .bbd-advisor-hint,
+#bbd-advisor .bbd-advisor-error {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 9px 11px;
+  background: rgba(17, 24, 39, 0.96);
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 10px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+}
+#bbd-advisor .bbd-advisor-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+#bbd-advisor .bbd-advisor-risk {
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+#bbd-advisor .bbd-advisor-risk.bbd-good {
+  background: #052e16;
+  color: #86efac;
+  border: 1px solid #22c55e;
+}
+#bbd-advisor .bbd-advisor-risk.bbd-warn {
+  background: #292112;
+  color: #fcd34d;
+  border: 1px solid #f59e0b;
+}
+#bbd-advisor .bbd-advisor-risk.bbd-bad {
+  background: #2d1212;
+  color: #fca5a5;
+  border: 1px solid #ef4444;
+}
+#bbd-advisor .bbd-advisor-confidence {
+  color: #94a3b8;
+  font-size: 11px;
+}
+#bbd-advisor .bbd-advisor-headline {
+  overflow: hidden;
+  color: #f8fafc;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#bbd-advisor details,
+#bbd-advisor .bbd-advisor-against {
+  margin-top: 7px;
+}
+#bbd-advisor summary,
+#bbd-advisor .bbd-advisor-list-title {
+  color: #cbd5e1;
+  font-weight: 700;
+}
+#bbd-advisor summary {
+  cursor: pointer;
+}
+#bbd-advisor ul {
+  margin: 4px 0 0 18px;
+  padding: 0;
+}
+#bbd-advisor li + li {
+  margin-top: 2px;
+}
+#bbd-advisor .bbd-advisor-against {
+  color: #fecaca;
+}
+#bbd-advisor .bbd-advisor-disclaimer {
+  margin-top: 8px;
+  color: #94a3b8;
+  font-size: 10px;
+}
+#bbd-advisor .bbd-advisor-pending,
+#bbd-advisor .bbd-advisor-hint {
+  color: #cbd5e1;
+}
+#bbd-advisor .bbd-advisor-error {
+  color: #fca5a5;
+  font-size: 11px;
+}
+
 /* Daily loss-limit overlay: a prominent, dismissible "step away" card. */
 #bbd-fomo {
   position: fixed;
