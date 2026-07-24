@@ -191,7 +191,12 @@ const pollUpdatesInner = async () => {
       // OWNER: in a private chat, chat id == user id, so tgChatId doubles as owner id.
       const fromOwner = String(u.message.from && u.message.from.id) === String(tgChatId);
       const isBindCmd = cmd0 === '/firehose' || cmd0 === '/tracking' || cmd0 === '/quality';
-      if (!bound && !(isBindCmd && fromOwner)) {
+      // Bind commands ALWAYS fall through to their handlers below — binding a
+      // chat is the one thing that must work from an unbound chat, and gating
+      // it on owner-detection (from.id === tgChatId) was too fragile: if that
+      // check ever misfires, you can never set the chat up. Only NON-bind
+      // commands are restricted to already-bound chats.
+      if (!bound && !isBindCmd) {
         // Don't fail silently at the OWNER — tell them the chat needs setup.
         // Strangers still get silence (no spam, no reveal).
         if (fromOwner) await reply('⚠️ This chat isn\'t set up yet, so I ignore commands here. Run /quality, /tracking, or /firehose in THIS chat once to bind it — then every command works and replies.');
