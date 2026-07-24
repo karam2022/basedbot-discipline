@@ -214,7 +214,12 @@ BBD.provider = (() => {
     }
   };
 
-  const firstJsonObject = (text) => {
+  // Every balanced top-level {...} span, in order. Reasoning models emit prose
+  // (often with stray braces) before the answer, so the first object is not
+  // reliably the verdict — we collect all candidates and let extractVerdict try
+  // them newest-first, since the final answer is typically last.
+  const balancedObjects = (text) => {
+    const out = [];
     let start = -1;
     let depth = 0;
     let inString = false;
@@ -241,11 +246,50 @@ BBD.provider = (() => {
       else if (char === '{') depth += 1;
       else if (char === '}') {
         depth -= 1;
-        if (depth === 0) return text.slice(start, i + 1);
+        if (depth === 0) {
+          out.push(text.slice(start, i + 1));
+          start = -1;
+        }
       }
     }
 
-    return null;
+    return out;
+  };
+
+  // Parse one candidate object into a verdict, or null if it is valid JSON but
+  // not a usable verdict (so a reasoning-prose object is skipped, not accepted).
+  const verdictFrom = (objectText) => {
+    let parsed;
+    try {
+      parsed = JSON.parse(objectText);
+    } catch (err) {
+      return null;
+    }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+
+    const risk = typeof parsed.risk === 'string' ? parsed.risk.trim().toLowerCase() : '';
+    if (!['low', 'medium', 'high', 'critical'].includes(risk)) return null;
+
+    const against = stringList(parsed.against);
+    if (!against.length) return null;
+
+    const rawConfidence = typeof parsed.confidence === 'string'
+      ? parsed.confidence.trim().toLowerCase()
+      : '';
+    const confidence = ['low', 'medium', 'high'].includes(rawConfidence)
+      ? rawConfidence
+      : 'low';
+
+    // Explicit assignment is the safety boundary: advice-like extras such
+    // as action never become part of the verdict consumed by the UI.
+    return {
+      risk,
+      headline: trimmedText(parsed.headline),
+      supports: stringList(parsed.supports),
+      against,
+      watchFor: stringList(parsed.watchFor),
+      confidence
+    };
   };
 
   const trimmedText = (value) => {
@@ -265,40 +309,13 @@ BBD.provider = (() => {
 
   const extractVerdict = (text) => {
     if (typeof text !== 'string') return null;
-    try {
-      const objectText = firstJsonObject(text);
-      if (!objectText) return null;
-      const parsed = JSON.parse(objectText);
-      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
-
-      const risk = typeof parsed.risk === 'string'
-        ? parsed.risk.trim().toLowerCase()
-        : '';
-      if (!['low', 'medium', 'high', 'critical'].includes(risk)) return null;
-
-      const against = stringList(parsed.against);
-      if (!against.length) return null;
-
-      const rawConfidence = typeof parsed.confidence === 'string'
-        ? parsed.confidence.trim().toLowerCase()
-        : '';
-      const confidence = ['low', 'medium', 'high'].includes(rawConfidence)
-        ? rawConfidence
-        : 'low';
-
-      // Explicit assignment is the safety boundary: advice-like extras such
-      // as action never become part of the verdict consumed by the UI.
-      return {
-        risk,
-        headline: trimmedText(parsed.headline),
-        supports: stringList(parsed.supports),
-        against,
-        watchFor: stringList(parsed.watchFor),
-        confidence
-      };
-    } catch (err) {
-      return null;
+    const candidates = balancedObjects(text);
+    // Newest-first: a reasoning preamble comes before the final answer.
+    for (let i = candidates.length - 1; i >= 0; i--) {
+      const verdict = verdictFrom(candidates[i]);
+      if (verdict) return verdict;
     }
+    return null;
   };
 
   return { PRESETS, buildRequest, parseResponse, extractVerdict };

@@ -212,6 +212,29 @@ test('extractVerdict finds balanced JSON wrapped in prose', () => {
   });
 });
 
+test('extractVerdict skips a reasoning-prose object and takes the final verdict', () => {
+  // Reasoning models emit an earlier {...} that is valid JSON but not a verdict;
+  // the real answer comes last. The parser must not stop at the first object.
+  const text = [
+    'Let me reason. Consider the metrics {"note":"top10 is 19% and holders 5010"}.',
+    'That looks reasonable, so my final answer is:',
+    '```json',
+    '{"risk":"medium","headline":"Concentration is moderate.",',
+    '"supports":["Many holders"],"against":["Top wallets still cluster"],',
+    '"watchFor":["A dev sell"],"confidence":"medium"}',
+    '```'
+  ].join('\n');
+
+  assert.deepEqual(BBD.provider.extractVerdict(text), {
+    risk: 'medium',
+    headline: 'Concentration is moderate.',
+    supports: ['Many holders'],
+    against: ['Top wallets still cluster'],
+    watchFor: ['A dev sell'],
+    confidence: 'medium'
+  });
+});
+
 test('extractVerdict rejects missing counter-arguments and invalid risk', () => {
   assert.equal(BBD.provider.extractVerdict(JSON.stringify({
     risk: 'medium',

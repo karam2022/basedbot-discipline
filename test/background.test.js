@@ -232,3 +232,51 @@ test('advisor connection test returns status without returning the verdict', asy
 
   assert.deepEqual(await send({ type: 'bbd-advisor-test' }), { ok: true });
 });
+
+test('advisor connection test passes on a reply that is text but not a verdict', async () => {
+  state.settings = {
+    ...state.settings,
+    advisorEnabled: false,
+    advisorProvider: 'openai',
+    advisorBaseUrl: 'https://provider.test/v1',
+    advisorModel: 'synthetic-model',
+    advisorApiKey: 'sk-test-advisor-textonly'
+  };
+  // A reachable model that answers in prose (no usable verdict) still proves the
+  // connection — the test must not fail just because the tiny snapshot yielded
+  // no counter-arguments.
+  fetchImpl = async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({
+      choices: [{ message: { content: 'The test token has too little data to assess.' } }]
+    })
+  });
+
+  assert.deepEqual(await send({ type: 'bbd-advisor-test' }), { ok: true });
+});
+
+test('a real verdict request surfaces a key-redacted snippet when unparseable', async () => {
+  const apiKey = 'sk-test-advisor-snippet';
+  state.settings = {
+    ...state.settings,
+    advisorEnabled: true,
+    advisorProvider: 'openai',
+    advisorBaseUrl: 'https://provider.test/v1',
+    advisorModel: 'synthetic-model',
+    advisorApiKey: apiKey
+  };
+  fetchImpl = async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({
+      choices: [{ message: { content: `No JSON here, and my own key ${apiKey} leaked into the prose.` } }]
+    })
+  });
+
+  const response = await send({ type: 'bbd-advisor-verdict', snapshot: { symbol: 'TEST' } });
+  assert.equal(response.ok, false);
+  assert.match(response.reason, /could not parse a verdict/);
+  assert.match(response.reason, /No JSON here/);
+  assert.equal(JSON.stringify(response).includes(apiKey), false);
+});

@@ -33,7 +33,7 @@ const advisorFailure = (value, apiKey, fallback = 'Advisor request failed') => {
   return { ok: false, reason: reason.slice(0, 300) };
 };
 
-const advisorVerdict = async (snapshot, requireEnabled = true) => {
+const advisorVerdict = async (snapshot, requireEnabled = true, connectionOnly = false) => {
   const { settings: saved } = await chrome.storage.local.get('settings');
   const settings = { ...BBD.DEFAULT_SETTINGS, ...(saved || {}) };
   const configured = ['advisorProvider', 'advisorBaseUrl', 'advisorModel', 'advisorApiKey']
@@ -84,7 +84,19 @@ const advisorVerdict = async (snapshot, requireEnabled = true) => {
 
   const verdict = BBD.provider.extractVerdict(parsed.text);
   if (!verdict) {
-    return { ok: false, reason: 'could not parse a verdict from the model reply' };
+    // A reachable model that returned text proves the connection even when the
+    // reply isn't a usable verdict, so the connection test passes here. A real
+    // request surfaces a short reply snippet (key-redacted) to make an
+    // unexpected model format diagnosable instead of opaque.
+    if (connectionOnly && typeof parsed.text === 'string' && parsed.text.trim()) {
+      return { ok: true };
+    }
+    const snippet = typeof parsed.text === 'string' ? parsed.text.trim().slice(0, 160) : '';
+    return advisorFailure(
+      snippet ? `could not parse a verdict from the model reply; got: ${snippet}` : null,
+      settings.advisorApiKey,
+      'could not parse a verdict from the model reply'
+    );
   }
   return { ok: true, verdict };
 };
@@ -94,7 +106,7 @@ const testAdvisor = async () => {
     symbol: 'TEST',
     safety: { top10: 20 },
     note: 'connection test'
-  }, false);
+  }, false, true);
   return result.ok ? { ok: true } : result;
 };
 
