@@ -148,8 +148,17 @@ const registerCommands = async () => {
 };
 
 // Single consumer of getUpdates: handles chat discovery AND Track buttons.
+let polling = false;
 const pollUpdates = async () => {
-  if (!TG_TOKEN) return;
+  if (!TG_TOKEN || polling) return; // single getUpdates consumer — never overlap
+  polling = true;
+  try {
+    await pollUpdatesInner();
+  } finally {
+    polling = false;
+  }
+};
+const pollUpdatesInner = async () => {
   const off = loadJson(OFFSET_PATH, { offset: 0 });
   const j = await tg('getUpdates', {
     offset: off.offset, timeout: 0,
@@ -182,10 +191,19 @@ const pollUpdates = async () => {
       // OWNER: in a private chat, chat id == user id, so tgChatId doubles as owner id.
       const fromOwner = String(u.message.from && u.message.from.id) === String(tgChatId);
       const isBindCmd = cmd0 === '/firehose' || cmd0 === '/tracking' || cmd0 === '/quality';
-      if (!bound && !(isBindCmd && fromOwner)) continue;
+      if (!bound && !(isBindCmd && fromOwner)) {
+        // Don't fail silently at the OWNER — tell them the chat needs setup.
+        // Strangers still get silence (no spam, no reveal).
+        if (fromOwner) await reply('⚠️ This chat isn\'t set up yet, so I ignore commands here. Run /quality, /tracking, or /firehose in THIS chat once to bind it — then every command works and replies.');
+        continue;
+      }
       const [cmdRaw, ...args] = txt.split(/\s+/);
       const cmd = cmdRaw.split('@')[0];
-      if (cmd === '/watch' && args.length) {
+      if (cmd === '/watch') {
+        if (!args.length) {
+          await reply('Usage: /watch GUSH — I\'ll alert on any new token whose name contains that word. /watchlist to see them.');
+          continue;
+        }
         const words = loadJson(WATCH_PATH, {});
         for (const w of args.slice(0, 10)) {
           const key = w.replace(/[^a-z0-9]/g, '');
@@ -195,11 +213,16 @@ const pollUpdates = async () => {
         await reply(`🔔 Watching: ${Object.keys(words).join(', ')}\nI'll alert on ANY new listing whose name or symbol contains a watchword — including fakes launched before an official token, so verify each against the project's own socials.`);
         continue;
       }
-      if (cmd === '/unwatch' && args.length) {
+      if (cmd === '/unwatch') {
         const words = loadJson(WATCH_PATH, {});
-        for (const w of args) delete words[w.replace(/[^a-z0-9]/g, '')];
+        if (!args.length) {
+          await reply(`Usage: /unwatch GUSH. Currently watching: ${Object.keys(words).join(', ') || '(none)'}`);
+          continue;
+        }
+        let removed = 0;
+        for (const w of args) { const k = w.replace(/[^a-z0-9]/g, ''); if (words[k]) { delete words[k]; removed += 1; } }
         saveJson(WATCH_PATH, words);
-        await reply(`Watchlist now: ${Object.keys(words).join(', ') || '(empty)'}`);
+        await reply(`✅ Removed ${removed}. Watchlist now: ${Object.keys(words).join(', ') || '(empty)'}`);
         continue;
       }
       if (cmd === '/track' && args.length) {
@@ -694,7 +717,6 @@ const tick = async () => {
   if (ticking) return;
   ticking = true;
   try {
-    await pollUpdates();
     const seen = loadJson(SEEN_PATH, {});
     const names = loadJson(NAMES_PATH, {});
     const watchwords = loadJson(WATCH_PATH, {});
@@ -878,6 +900,7 @@ try {
 await registerCommands(); // after plugin load, so its commands join the menu
 await tick();
 setInterval(() => { scanCount += 1; tick(); }, INTERVAL_MS);
+setInterval(pollUpdates, 4000); // commands answer in ~4s, not every 30s scan
 setInterval(reloadAll, RELOAD_MS);
 setInterval(exitWatch, EXIT_CHECK_MS);
 setInterval(heartbeat, HEARTBEAT_MS);
