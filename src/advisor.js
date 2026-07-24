@@ -178,6 +178,16 @@ BBD.advisor = (() => {
     const card = document.createElement('div');
     card.className = 'bbd-advisor-card';
 
+    // Dismiss clears only the verdict output; the 🤖 button stays so the read
+    // can be re-run. tick() never repopulates output, so this isn't undone.
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'bbd-advisor-close';
+    close.textContent = '×';
+    close.title = 'Dismiss';
+    close.addEventListener('click', () => ui.output.replaceChildren());
+    card.appendChild(close);
+
     const meta = document.createElement('div');
     meta.className = 'bbd-advisor-meta';
     const chip = document.createElement('span');

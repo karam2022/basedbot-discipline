@@ -270,11 +270,30 @@ a[href*="/token/"]:hover .bbd-override,
   -webkit-backdrop-filter: blur(10px);
   backdrop-filter: blur(10px);
 }
+#bbd-advisor .bbd-advisor-card {
+  position: relative;
+}
+#bbd-advisor .bbd-advisor-close {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  appearance: none;
+  background: transparent;
+  border: none;
+  color: #9ca3af;
+  font: 700 16px/1 system-ui, sans-serif;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+#bbd-advisor .bbd-advisor-close:hover {
+  color: #e5e7eb;
+}
 #bbd-advisor .bbd-advisor-meta {
   display: flex;
   align-items: center;
   gap: 8px;
   margin-bottom: 6px;
+  padding-right: 18px;
 }
 #bbd-advisor .bbd-advisor-risk {
   padding: 2px 7px;
