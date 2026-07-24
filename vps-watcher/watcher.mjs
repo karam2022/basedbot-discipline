@@ -100,6 +100,53 @@ const sendTelegram = async (text, buttons, dest = 'quality') => {
   return Boolean(j && j.ok);
 };
 
+// The command menu Telegram shows when you type "/". Without setMyCommands the
+// bot advertises nothing, so there's no autocomplete — that's the whole reason
+// the groups felt uncontrollable. Registered on every startup (idempotent).
+const CMD_LIST = [
+  { command: 'help', description: 'Show every command + what this chat does' },
+  { command: 'track', description: 'Watch a token for exit signals — /track 0x…' },
+  { command: 'untrack', description: 'Stop watching a token — /untrack 0x…' },
+  { command: 'tracklist', description: 'List tokens under exit watch' },
+  { command: 'watch', description: 'Alert on new tokens by name — /watch GUSH' },
+  { command: 'unwatch', description: 'Remove a watchword — /unwatch GUSH' },
+  { command: 'watchlist', description: 'Show your watchwords' },
+  { command: 'tracking', description: 'Bind THIS chat as the Tracking channel' },
+  { command: 'firehose', description: 'Bind THIS chat as the Firehose channel' },
+  { command: 'quality', description: 'Bind THIS chat as the Quality channel' }
+];
+// A private plugin may add its own commands (menu) + a /help section. The
+// public build has no plugin, so its menu stays exactly the list above.
+const HELP_TEXT = (role, extra = '') => `🤖 BasedBot — what I can do
+
+📍 EXIT WATCH (Tracking chat)
+/track 0x… — watch a token, warn me if it bleeds
+/untrack 0x… — stop watching one
+/tracklist — what's under exit watch right now
+
+🔔 WATCHWORDS (any chat)
+/watch GUSH — ping me on any new token named GUSH
+/unwatch GUSH — remove it
+/watchlist — show them
+${extra ? '\n' + extra + '\n' : ''}
+⚙️ SETUP — run inside the chat you want it to be
+/tracking · /firehose · /quality
+
+You can also press 📍 Track on any alert instead of typing /track.
+
+This chat is: ${role}`;
+
+const registerCommands = async () => {
+  if (!TG_TOKEN) return;
+  const commands = [...CMD_LIST, ...((plugin && plugin.commands) || [])];
+  // Set the menu at three scopes so it shows in private chats, every group
+  // (bound or not — that's how you discover /quality to bind it), and default.
+  for (const scope of [{ type: 'default' }, { type: 'all_private_chats' }, { type: 'all_group_chats' }]) {
+    await tg('setMyCommands', { commands, scope });
+  }
+  console.log(`[watcher] telegram command menu registered (${commands.length} commands)`);
+};
+
 // Single consumer of getUpdates: handles chat discovery AND Track buttons.
 const pollUpdates = async () => {
   if (!TG_TOKEN) return;
@@ -114,18 +161,28 @@ const pollUpdates = async () => {
     const txt = (u.message && u.message.text || '').trim().toLowerCase();
     if (u.message && u.message.chat && txt.startsWith('/')) {
       const fromChat = String(u.message.chat.id);
+      const reply = (text) => tg('sendMessage', { chat_id: u.message.chat.id, text, disable_web_page_preview: true });
+      const cmd0 = txt.split(/\s+/)[0].split('@')[0];
+      // /help works from ANY chat — it's how you discover everything else.
+      if (cmd0 === '/help') {
+        const role = fromChat === String(tgTrackingChatId) ? 'Tracking 📍 (discipline + exit watch)'
+          : fromChat === String(tgFirehoseChatId) ? 'Firehose 🌊 (high-volume tiers)'
+            : fromChat === String(tgQualityChatId) ? 'Quality 🏆 (rare high-conviction)'
+              : fromChat === String(tgChatId) ? 'your Owner DM'
+                : 'NOT BOUND yet — run /tracking, /firehose, or /quality here';
+        await reply(HELP_TEXT(role, (plugin && plugin.helpSection) || ''));
+        continue;
+      }
       // Commands only from bound chats — anyone can message a bot, and the
-      // watchlist must not be writable by strangers. (/firehose is exempt:
-      // binding a new chat is the one command that must work from anywhere.)
+      // watchlist must not be writable by strangers. (bind commands are exempt:
+      // binding a new chat is the one thing that must work from anywhere.)
       const bound = [tgChatId, tgFirehoseChatId, tgTrackingChatId, tgQualityChatId]
         .some((id) => id && fromChat === String(id));
-      // /firehose may come from a new (unbound) group, but only from the OWNER:
-      // in a private chat, chat id == user id, so tgChatId doubles as owner id.
+      // A bind command may come from a new (unbound) group, but only from the
+      // OWNER: in a private chat, chat id == user id, so tgChatId doubles as owner id.
       const fromOwner = String(u.message.from && u.message.from.id) === String(tgChatId);
-      const cmd0 = txt.split(/\s+/)[0].split('@')[0];
       const isBindCmd = cmd0 === '/firehose' || cmd0 === '/tracking' || cmd0 === '/quality';
       if (!bound && !(isBindCmd && fromOwner)) continue;
-      const reply = (text) => tg('sendMessage', { chat_id: u.message.chat.id, text });
       const [cmdRaw, ...args] = txt.split(/\s+/);
       const cmd = cmdRaw.split('@')[0];
       if (cmd === '/watch' && args.length) {
@@ -143,6 +200,35 @@ const pollUpdates = async () => {
         for (const w of args) delete words[w.replace(/[^a-z0-9]/g, '')];
         saveJson(WATCH_PATH, words);
         await reply(`Watchlist now: ${Object.keys(words).join(', ') || '(empty)'}`);
+        continue;
+      }
+      if (cmd === '/track' && args.length) {
+        const addr = args[0];
+        if (!/^0x[a-f0-9]{6,}$/.test(addr)) {
+          await reply('Give me a token address: /track 0x…  (or just press 📍 Track on an alert).');
+          continue;
+        }
+        const chain = CHAINS[0];
+        const tracked = loadJson(TRACKED_PATH, {});
+        tracked[addr] = { chain, ts: Date.now(), baseline: null, peakHolders: 0, lastExitAlert: 0 };
+        saveJson(TRACKED_PATH, tracked);
+        await reply(`📍 Tracking ${addr.slice(0, 12)}… on ${chain}. I'll warn you if holders bleed or the holder structure deteriorates. Auto-untracks in ${Math.round(TRACK_TTL_MS / 86400000)}d.`);
+        continue;
+      }
+      if (cmd === '/untrack' && args.length) {
+        const tracked = loadJson(TRACKED_PATH, {});
+        let n = 0;
+        for (const a of args) if (tracked[a]) { delete tracked[a]; n += 1; }
+        saveJson(TRACKED_PATH, tracked);
+        await reply(`Untracked ${n}. Still watching: ${Object.keys(tracked).length}.`);
+        continue;
+      }
+      if (cmd === '/tracklist') {
+        const tracked = loadJson(TRACKED_PATH, {});
+        const keys = Object.keys(tracked);
+        await reply(keys.length
+          ? `📍 Under exit watch (${keys.length}):\n${keys.map((a) => `  ${a.slice(0, 14)}… (${tracked[a].chain})`).join('\n')}`
+          : '📍 Nothing tracked yet. Press 📍 Track on an alert, or /track 0x…');
         continue;
       }
       if (plugin && plugin.onCommand && await plugin.onCommand(cmd, args, reply)) continue;
@@ -166,7 +252,7 @@ const pollUpdates = async () => {
       console.log(`[watcher] tracking chat bound: ${tgTrackingChatId}`);
       continue;
     }
-    if (u.message && u.message.chat && txt === '/firehose') {
+    if (u.message && u.message.chat && txt.split('@')[0] === '/firehose') {
       tgFirehoseChatId = String(u.message.chat.id);
       saveJson(CONFIG_PATH, { ...config, tgChatId, tgFirehoseChatId });
       await tg('sendMessage', { chat_id: tgFirehoseChatId, text: '🌊 This chat is now the FIREHOSE — high-volume tiers (💎 basic, 🚀 momentum, 🌱 basic) land here. Your main chat keeps only 🔥, strict 🌱👑, strong 💎, and exit warnings.' });
@@ -789,6 +875,7 @@ try {
   plugin = mod.create ? mod.create({ pages, CHAINS, CHAIN_IDS, scanPage, fetchMetadata, sendTelegram, config }) : null;
   if (plugin) console.log('[watcher] local plugin loaded');
 } catch (e) { /* no plugin present — normal for the public build */ }
+await registerCommands(); // after plugin load, so its commands join the menu
 await tick();
 setInterval(() => { scanCount += 1; tick(); }, INTERVAL_MS);
 setInterval(reloadAll, RELOAD_MS);
