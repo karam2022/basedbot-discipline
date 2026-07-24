@@ -51,6 +51,8 @@ const DEFAULTS = {
   whaleSellUsd: 300,
   whaleSellLiquidityPct: 2,
   dumpWindowMin: 3,
+  exitAlarmEnabled: true,
+  exitAlarmDropPct: 8,
   // Read only by the popup + background worker (from raw storage).
   tgToken: '',
   tgChatId: '',
@@ -109,7 +111,9 @@ const TOGGLES = {
     ['fomoGuardEnabled', 'Anti-FOMO guards', 'Daily loss limit + revenge-trade warning']
   ],
   dumpToggles: [
-    ['dumpAlertsEnabled', 'Dev / whale dump alerts', 'Watch held tokens for creator or whale sells']
+    ['dumpAlertsEnabled', 'Dev / whale dump alerts', 'Watch held tokens for creator or whale sells'],
+    ['exitAlarmEnabled', 'AI exit-timing alarm',
+      'Ping when a token the AI rated high/critical drops fast — needs a prior KI-Check']
   ],
   tgToggles: [
     ['laptopHotAlerts', '🔥 Telegram alerts from this laptop', 'Turn off if a VPS watcher covers discovery']
@@ -158,7 +162,8 @@ const NUMBERS = {
   dumpFields: [
     ['whaleSellUsd', 'Whale sell alert over $', 1, 1000000, ''],
     ['whaleSellLiquidityPct', '…or % of liquidity', 0, 100, '%'],
-    ['dumpWindowMin', 'Only sells within', 1, 60, 'min']
+    ['dumpWindowMin', 'Only sells within', 1, 60, 'min'],
+    ['exitAlarmDropPct', 'Exit alarm on 5m drop of', 1, 90, '%']
   ]
 };
 

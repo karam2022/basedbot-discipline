@@ -60,7 +60,9 @@ BBD.dump = (() => {
   const tick = async () => {
     try {
       const settings = await BBD.store.settings();
-      if (!settings.dumpAlertsEnabled) return;
+      // The poll feeds both dev/whale detection and the AI exit-timing alarm;
+      // run it if either wants it, then each gates its own action below.
+      if (!settings.dumpAlertsEnabled && !settings.exitAlarmEnabled) return;
       const positions = await BBD.store.get(BBD.KEYS.positions, {});
       const all = Object.entries(positions).map(([positionKey, p]) => ({
         positionKey, ...p, addr: BBD.positionAddr(positionKey, p)
@@ -102,21 +104,26 @@ BBD.dump = (() => {
         // This poll is the freshest price we get for held tokens (the live swap
         // socket is unreachable — see feed.notePrice) — feed the tick cache.
         BBD.feed.notePrice(addr, trades);
-        const market = BBD.feed.marketFor(addr);
-        const liquidityThreshold = market && typeof market.liq === 'number'
-          ? market.liq * settings.whaleSellLiquidityPct / 100 : 0;
-        const hits = detect(trades, {
-          creatorAddr: BBD.feed.creatorFor(addr),
-          whaleSellUsd: Math.max(settings.whaleSellUsd, liquidityThreshold),
-          now,
-          windowMs
-        });
-        for (const hit of hits) {
-          if (!hit.txHash || seen.has(hit.txHash)) continue;
-          seen.add(hit.txHash);
-          notify(pos, hit);
-          if (BBD.advisor) BBD.advisor.onDump(pos.addr);
+        // Dev/whale detection is gated by its own master switch, so the
+        // AI exit-timing alarm can share this poll even when it's off.
+        if (settings.dumpAlertsEnabled) {
+          const market = BBD.feed.marketFor(addr);
+          const liquidityThreshold = market && typeof market.liq === 'number'
+            ? market.liq * settings.whaleSellLiquidityPct / 100 : 0;
+          const hits = detect(trades, {
+            creatorAddr: BBD.feed.creatorFor(addr),
+            whaleSellUsd: Math.max(settings.whaleSellUsd, liquidityThreshold),
+            now,
+            windowMs
+          });
+          for (const hit of hits) {
+            if (!hit.txHash || seen.has(hit.txHash)) continue;
+            seen.add(hit.txHash);
+            notify(pos, hit);
+            if (BBD.advisor) BBD.advisor.onDump(pos.addr);
+          }
         }
+        if (BBD.exitAlarm) BBD.exitAlarm.check(pos, trades, settings);
       }
     } catch (err) {
       console.warn('[bbd] dump tick failed', err);

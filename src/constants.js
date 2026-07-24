@@ -38,6 +38,9 @@ BBD.DEFAULT_SETTINGS = Object.freeze({
   whaleSellUsd: 300,
   whaleSellLiquidityPct: 2,
   dumpWindowMin: 3,
+  // This alarm only fires for tokens the advisor already rated high/critical.
+  exitAlarmEnabled: true,
+  exitAlarmDropPct: 8,
   // Utility-score thresholds: hide below minScore, flag gems at gemMinScore.
   minScore: 2,
   gemMinScore: 4,
