@@ -220,6 +220,47 @@ a[href*="/token/"]:hover .bbd-override,
   border: 1px solid #ef4444;
 }
 
+/* REST-backed token price stays opposite the bottom-left intel/advisor stack. */
+#bbd-price {
+  position: fixed;
+  top: 72px;
+  right: 16px;
+  z-index: 2147483000;
+  display: none;
+  min-width: 92px;
+  box-sizing: border-box;
+  padding: 7px 12px;
+  background: rgba(17, 24, 39, 0.94);
+  color: #f8fafc;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  border-radius: 999px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.45);
+  font-family: system-ui, sans-serif;
+  text-align: right;
+  pointer-events: none;
+}
+#bbd-price .bbd-price-value {
+  display: block;
+  font-size: 15px;
+  font-weight: 800;
+  line-height: 1.2;
+}
+#bbd-price .bbd-price-change {
+  display: block;
+  margin-top: 2px;
+  color: #94a3b8;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+#bbd-price .bbd-price-up {
+  color: #86efac;
+}
+#bbd-price .bbd-price-down {
+  color: #fca5a5;
+}
+
 /* 🤖 Token-page AI risk read. The button sits beside the 🛡 chip when the
    viewport has room; advisor.js moves the same owned node just above it when
    the full card would overflow. */

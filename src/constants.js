@@ -43,6 +43,9 @@ BBD.DEFAULT_SETTINGS = Object.freeze({
   gemMinScore: 4,
   // Compact per-card safety readout (🛡 N/7) in each Pulse card's corner.
   cardIntelEnabled: true,
+  // REST-backed live price pill on token pages; the push socket is unreachable
+  // from the extension because basedbot runs it inside a Web Worker.
+  priceTickerEnabled: true,
   // Per-metric hard hide rules (see BBD.HIDE_METRICS). Each: hide any token
   // whose stat exceeds the max %, regardless of utility. Held tokens and
   // "always show" overrides are never hidden. top-10 on by default; the rest

@@ -12,7 +12,7 @@
     intervals.forEach(clearInterval);
     observer.disconnect();
     ['bbd-filter-chip', 'bbd-banner', 'bbd-refresh', 'bbd-intel', 'bbd-advisor',
-      'bbd-advisor-btn', 'bbd-fomo', 'bbd-guard-revenge']
+      'bbd-advisor-btn', 'bbd-price', 'bbd-fomo', 'bbd-guard-revenge']
       .forEach((id) => document.getElementById(id)?.remove());
     document.querySelectorAll('.bbd-hidden, .bbd-gem, .bbd-hot, .bbd-baddev, .bbd-danger, .bbd-override, .bbd-cardintel')
       .forEach((el) => {
@@ -33,6 +33,7 @@
     BBD.pnl.scan();
     BBD.intel.scan();
     BBD.advisor.tick();
+    BBD.price.tick();
     Promise.resolve(BBD.banner.tick()).then(() => BBD.advisor.onBannerTick());
     BBD.guard.tick();
   };
@@ -88,6 +89,10 @@
     Promise.resolve(BBD.banner.tick()).then(() => BBD.advisor.onBannerTick());
     BBD.guard.tick();
   }), BBD.POLL_MS));
+
+  // Price changes deserve a faster read than the rest of the token-page scans;
+  // this REST cadence replaces the unreachable binary push socket.
+  intervals.push(setInterval(guard(() => BBD.price.tick()), 2500));
 
   // React immediately when settings change from the popup.
   try {

@@ -36,6 +36,7 @@
         "src/dump.js",
         "src/candles.js",
         "src/features.js",
+        "src/price.js",
         "src/advisor.js",
         "src/main.js"
       ],

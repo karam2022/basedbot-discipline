@@ -30,6 +30,7 @@ const DEFAULTS = {
   hotMinUtilityScore: 2,
   // Per-card safety readout + risk guards (feed).
   cardIntelEnabled: true,
+  priceTickerEnabled: true,
   creatorGuardEnabled: true,
   creatorMaxLaunches: 5,
   creatorMaxRugs: 2,
@@ -90,6 +91,8 @@ const TOGGLES = {
     ['filterEnabled', 'Hide meme coins on Pulse'],
     ['hotEnabled', '🔥 / 💎 highlights on Pulse'],
     ['cardIntelEnabled', '🛡 Per-card safety readout', 'Shows a N/7 safety pill on every Pulse card'],
+    ['priceTickerEnabled', 'Live price on token page',
+      'Polls the trade tape every ~2.5s — no push socket needed'],
     ['creatorGuardEnabled', '⚠️ Flag risky creators', 'Marks tokens from serial launchers / past ruggers'],
     ['auditGuardEnabled', '⛔ Flag risky contracts', 'Marks tokens whose contract/hook can drain liquidity']
   ],
