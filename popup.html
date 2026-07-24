@@ -87,6 +87,27 @@
   </section>
 
   <section class="section">
+    <div class="eyebrow">AI advisor</div>
+    <div id="advisorToggles"></div>
+    <div class="row"><span class="label">Provider</span>
+      <select id="advisorProvider" style="width:210px"></select></div>
+    <div class="row"><span class="label">Base URL</span>
+      <input type="text" id="advisorBaseUrl" style="width:210px" placeholder="https://api.example.com/v1" /></div>
+    <div class="row"><span class="label">Model</span>
+      <input type="text" id="advisorModel" style="width:210px" placeholder="provider model ID" /></div>
+    <div class="row"><span class="label">API key</span>
+      <input type="password" id="advisorApiKey" style="width:210px"
+        placeholder="stored locally" autocomplete="off" /></div>
+    <div class="row" style="margin-top:6px">
+      <button type="button" id="testAdvisor" class="linkbtn">Grant access &amp; test</button>
+    </div>
+    <div id="advisorStatus" class="hint mono" aria-live="polite"></div>
+    <div class="hint">The key stays local and is sent only to the endpoint you choose.
+      The advisor is opt-in and off by default; requests bill to your provider account,
+      and it never places trades.</div>
+  </section>
+
+  <section class="section">
     <div class="eyebrow">Meme launchpads</div>
     <div class="badge-row" id="badges"></div>
   </section>
@@ -108,6 +129,8 @@
   </div>
 
   <div id="status"></div>
+  <script src="src/constants.js"></script>
+  <script src="src/provider.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

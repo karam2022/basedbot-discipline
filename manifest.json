@@ -5,6 +5,7 @@
   "description": "Hides meme coins on basedbot Pulse, nags you to take profit and cut losses, flags risky devs/contracts, and keeps a trade journal.",
   "permissions": ["storage", "notifications", "unlimitedStorage"],
   "host_permissions": ["https://basedbot.app/*", "https://api.telegram.org/*"],
+  "optional_host_permissions": ["https://*/*"],
   "background": { "service_worker": "background.js" },
   "action": {
     "default_popup": "popup.html",

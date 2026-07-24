@@ -2,6 +2,10 @@
 // whole-wallet position snapshots from all open BasedBot tabs.
 'use strict';
 
+if (typeof importScripts === 'function') {
+  importScripts('src/constants.js', 'src/provider.js');
+}
+
 const ID_PREFIX = 'bbd|';
 const idFor = (url) => `${ID_PREFIX}${url || ''}|${Date.now()}`;
 const urlFrom = (id) => {
@@ -13,6 +17,86 @@ const urlFrom = (id) => {
 const DEDUPE_TTL_MS = 24 * 3600 * 1000;
 let alertChain = Promise.resolve();
 let positionSyncChain = Promise.resolve();
+
+const RUBRIC = 'You assess risk from already-computed on-chain memecoin metrics. ' +
+  'This is a RISK ASSESSMENT, not financial advice. Do not recommend buying or selling, ' +
+  'never say "you should buy" or "you should sell", and do not emit an action field. ' +
+  'Synthesize the numbers and flag conflicts; do not recompute metrics or predict price. ' +
+  'Respond with ONLY a JSON object, no prose or code fence, with: risk ' +
+  '(low|medium|high|critical), headline (one sentence), supports (array), against ' +
+  '(array with at least one entry), watchFor (array), confidence (low|medium|high).';
+
+const advisorFailure = (value, apiKey, fallback = 'Advisor request failed') => {
+  let reason = value && value.message ? value.message : value;
+  reason = typeof reason === 'string' && reason.trim() ? reason.trim() : fallback;
+  if (apiKey) reason = reason.split(apiKey).join('[redacted]');
+  return { ok: false, reason: reason.slice(0, 300) };
+};
+
+const advisorVerdict = async (snapshot, requireEnabled = true) => {
+  const { settings: saved } = await chrome.storage.local.get('settings');
+  const settings = { ...BBD.DEFAULT_SETTINGS, ...(saved || {}) };
+  const configured = ['advisorProvider', 'advisorBaseUrl', 'advisorModel', 'advisorApiKey']
+    .every((key) => typeof settings[key] === 'string' && settings[key].trim());
+  if ((requireEnabled && !settings.advisorEnabled) || !configured) {
+    return { ok: false, reason: 'advisor not configured' };
+  }
+  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) {
+    return { ok: false, reason: 'invalid advisor snapshot' };
+  }
+
+  const preset = BBD.provider.PRESETS.find((item) => item.id === settings.advisorProvider);
+  const adapter = preset && preset.id !== 'custom' ? preset.adapter : 'openai-compatible';
+  let req;
+  try {
+    req = BBD.provider.buildRequest({
+      adapter,
+      baseUrl: settings.advisorBaseUrl,
+      model: settings.advisorModel,
+      apiKey: settings.advisorApiKey,
+      system: RUBRIC,
+      user: JSON.stringify(snapshot)
+    });
+  } catch (err) {
+    return advisorFailure(err, settings.advisorApiKey);
+  }
+
+  let res;
+  try {
+    res = await fetch(req.url, {
+      method: req.method,
+      headers: req.headers,
+      body: JSON.stringify(req.body)
+    });
+  } catch (err) {
+    return advisorFailure(err, settings.advisorApiKey);
+  }
+
+  let json = null;
+  try {
+    json = await res.json();
+  } catch (err) {
+    // Some gateways return an HTML error page; status still carries the useful
+    // failure signal and parseResponse handles a missing JSON body.
+  }
+  const parsed = BBD.provider.parseResponse({ adapter, status: res.status, json });
+  if (parsed.error) return advisorFailure(parsed.error, settings.advisorApiKey);
+
+  const verdict = BBD.provider.extractVerdict(parsed.text);
+  if (!verdict) {
+    return { ok: false, reason: 'could not parse a verdict from the model reply' };
+  }
+  return { ok: true, verdict };
+};
+
+const testAdvisor = async () => {
+  const result = await advisorVerdict({
+    symbol: 'TEST',
+    safety: { top10: 20 },
+    note: 'connection test'
+  }, false);
+  return result.ok ? { ok: true } : result;
+};
 
 const canSend = async (dedupe) => {
   if (!dedupe || !dedupe.key) return true;
@@ -189,6 +273,15 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       title: '✅ BasedBot Discipline connected',
       message: 'Telegram alerts are working.'
     }).then(sendResponse).catch((err) => sendResponse({ ok: false, reason: err.message }));
+    return true;
+  }
+  if (msg.type === 'bbd-advisor-verdict') {
+    advisorVerdict(msg.snapshot).then(sendResponse)
+      .catch((err) => sendResponse(advisorFailure(err)));
+    return true;
+  }
+  if (msg.type === 'bbd-advisor-test') {
+    testAdvisor().then(sendResponse).catch((err) => sendResponse(advisorFailure(err)));
     return true;
   }
   if (msg.type === 'bbd-sync-positions') {

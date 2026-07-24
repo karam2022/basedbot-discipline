@@ -15,7 +15,7 @@ things most traders wish they did themselves:
 
 No auto-trading. It never touches the buy or sell button. It reads what's on
 the page and tells you what it sees. Nothing leaves your browser except the
-Telegram messages you configure yourself.
+Telegram messages and opt-in AI-provider requests you configure yourself.
 
 Works on every chain basedbot's Pulse supports (Robinhood, Base, Ethereum,
 Solana, and more).
@@ -108,6 +108,13 @@ snipers, insiders, bundlers, Dex Paid, LP burned/locked, renounced, and
 **buy/sell tax** (the honeypot check; tax only exists on the token page, not the
 feed). Green = clean, amber = 1–2 warnings, red = walk away.
 
+### AI advisor (optional)
+
+Bring your own provider key and the advisor synthesizes the already-computed
+on-chain metrics into a risk assessment with supporting and opposing evidence.
+It is opt-in and never trades or recommends buying or selling. The key stays in
+local extension storage and is sent only to the provider endpoint you choose.
+
 ### The take-profit banner
 
 On any token page or your Portfolio, the extension reads your position PnL.
@@ -184,17 +191,18 @@ session). Skip this entirely if you just want the extension.
 ## Privacy & safety
 
 The extension is scoped to `basedbot.app` only — its content scripts match that
-one host and nothing else, and it has no `tabs`, `scripting`, or all-URLs
-permission, so it cannot run on or affect any other site. Permissions:
-`storage`, `notifications`, `unlimitedStorage`, and `api.telegram.org` (only if
-you configure a bot). No wallet access, no keys, no transactions. The source is
-small and unminified — read it.
+one host and nothing else, and it has no `tabs`, `scripting`, or always-on
+all-URLs permission, so it cannot run on or affect any other site. Permissions:
+`storage`, `notifications`, `unlimitedStorage`, `api.telegram.org`, and optional
+access to the one AI-provider origin you explicitly grant. No wallet access, no
+wallet keys, no transactions. The source is small and unminified — read it.
 
 ## Contributing
 
 PRs welcome. See [CONTRIBUTING.md](CONTRIBUTING.md). The one hard line: no
-auto-trading, ever, and nothing that phones home beyond basedbot and the
-Telegram bot the user sets up. Good first issues are labeled on the
+auto-trading, ever, and nothing that phones home beyond basedbot, the Telegram
+bot the user sets up, and the AI provider the user configures. Good first
+issues are labeled on the
 [issue tracker](https://github.com/karam2022/basedbot-discipline/issues).
 
 ## Disclaimers

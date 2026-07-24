@@ -128,7 +128,7 @@ body {
 .toggle input:focus-visible + .box { outline: 1px solid var(--ink); outline-offset: 2px; }
 
 /* Number input: mono, tabular, hairline-framed */
-input[type="number"], input[type="text"], textarea {
+input[type="number"], input[type="text"], input[type="password"], select, textarea {
   font-family: var(--mono);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
@@ -143,6 +143,7 @@ input[type="number"] { width: 62px; text-align: right; -moz-appearance: textfiel
 input[type="number"]::-webkit-inner-spin-button { opacity: 0.28; margin-left: 3px; }
 input:focus, textarea:focus { outline: none; border-color: var(--ink); }
 input::placeholder, textarea::placeholder { color: var(--faint); }
+select:focus { outline: none; border-color: var(--ink); }
 .unit { font-family: var(--mono); font-size: 11px; color: var(--muted); min-width: 10px; }
 
 /* Number row: label left, framed input right */

@@ -50,8 +50,16 @@ const DEFAULTS = {
   whaleSellUsd: 300,
   whaleSellLiquidityPct: 2,
   dumpWindowMin: 3,
+  // Read only by the popup + background worker (from raw storage).
   tgToken: '',
   tgChatId: '',
+  advisorEnabled: false,
+  advisorProvider: '',
+  advisorBaseUrl: '',
+  advisorModel: '',
+  advisorApiKey: '',
+  advisorOnDump: false,
+  advisorOnBanner: false,
   memeBadges: ['Pons', 'bow.fun', 'Flap', 'Circus', 'Charms', 'Long.xyz', 'Bankr', 'Ape Store',
     'Zora', 'Clanker', 'Flaunch', 'Stroid', 'Klik', 'Trench', 'Livo',
     'Pump.fun', 'PumpFun', 'PumpSwap', 'Bags', 'Meteora DBC'],
@@ -100,6 +108,11 @@ const TOGGLES = {
   ],
   tgToggles: [
     ['laptopHotAlerts', '🔥 Telegram alerts from this laptop', 'Turn off if a VPS watcher covers discovery']
+  ],
+  advisorToggles: [
+    ['advisorEnabled', 'Enable AI advisor', 'Opt-in; requests bill to your provider account'],
+    ['advisorOnDump', 'Run on dump alerts'],
+    ['advisorOnBanner', 'Run on take-profit banners']
   ]
 };
 
@@ -367,6 +380,75 @@ const init = async () => {
     $(id).value = settings[id] || '';
     $(id).addEventListener('change', () => saveSettings({ [id]: $(id).value.trim() }));
   }
+
+  const providerSelect = $('advisorProvider');
+  providerSelect.append(el('option', null, 'Choose provider…'));
+  providerSelect.firstChild.value = '';
+  for (const preset of BBD.provider.PRESETS) {
+    const option = el('option', null, preset.label);
+    option.value = preset.id;
+    providerSelect.append(option);
+  }
+  providerSelect.value = settings.advisorProvider || '';
+
+  for (const id of ['advisorBaseUrl', 'advisorModel', 'advisorApiKey']) {
+    $(id).value = settings[id] || '';
+    $(id).addEventListener('change', () => saveSettings({ [id]: $(id).value.trim() }));
+  }
+
+  providerSelect.addEventListener('change', () => {
+    const preset = BBD.provider.PRESETS.find((item) => item.id === providerSelect.value);
+    $('advisorBaseUrl').value = preset ? preset.baseUrl : '';
+    $('advisorModel').value = preset ? preset.defaultModel : '';
+    saveSettings({
+      advisorProvider: providerSelect.value,
+      advisorBaseUrl: $('advisorBaseUrl').value.trim(),
+      advisorModel: $('advisorModel').value.trim()
+    });
+  });
+
+  const setAdvisorStatus = (text) => {
+    $('advisorStatus').textContent = text;
+  };
+  $('testAdvisor').addEventListener('click', async () => {
+    let parsedUrl;
+    try {
+      parsedUrl = new URL($('advisorBaseUrl').value.trim());
+      if (!['http:', 'https:'].includes(parsedUrl.protocol)) throw new Error('bad protocol');
+    } catch (err) {
+      setAdvisorStatus('Enter a valid HTTP(S) base URL.');
+      return;
+    }
+
+    const pattern = `${parsedUrl.origin}/*`;
+    let granted = false;
+    try {
+      granted = await chrome.permissions.request({ origins: [pattern] });
+    } catch (err) {
+      setAdvisorStatus('Could not request access to that provider origin.');
+      return;
+    }
+    if (!granted) {
+      setAdvisorStatus('Provider access was denied; no test was sent.');
+      return;
+    }
+
+    await saveSettings({
+      advisorProvider: providerSelect.value,
+      advisorBaseUrl: $('advisorBaseUrl').value.trim(),
+      advisorModel: $('advisorModel').value.trim(),
+      advisorApiKey: $('advisorApiKey').value.trim()
+    });
+    setAdvisorStatus('Testing provider…');
+    try {
+      const result = await chrome.runtime.sendMessage({ type: 'bbd-advisor-test' });
+      setAdvisorStatus(result && result.ok
+        ? 'Provider connection works.'
+        : (result && result.reason) || 'Provider test failed.');
+    } catch (err) {
+      setAdvisorStatus('Provider test failed.');
+    }
+  });
 
   $('memeKeywords').value = settings.memeKeywords.join(', ');
   $('memeKeywords').addEventListener('change', () => {

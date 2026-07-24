@@ -97,7 +97,14 @@ BBD.DEFAULT_SETTINGS = Object.freeze({
   // Read only by the popup + background worker (from raw storage), but kept
   // here so DEFAULT_SETTINGS is the single complete source of truth.
   tgToken: '',
-  tgChatId: ''
+  tgChatId: '',
+  advisorEnabled: false,
+  advisorProvider: '',
+  advisorBaseUrl: '',
+  advisorModel: '',
+  advisorApiKey: '',
+  advisorOnDump: false,
+  advisorOnBanner: false
 });
 
 // chrome.storage.local keys.
