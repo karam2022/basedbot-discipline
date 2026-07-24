@@ -150,6 +150,42 @@ test('advisor returns a validated verdict and sends the key only in the auth hea
   assert.equal(JSON.stringify(response).includes(apiKey), false);
 });
 
+test('advisor passes the configured max tokens and thinking-disable into the request', async () => {
+  state.settings = {
+    ...state.settings,
+    advisorEnabled: true,
+    advisorProvider: 'glm',
+    advisorBaseUrl: 'https://api.z.ai/api/coding/paas/v4',
+    advisorModel: 'GLM-5.2',
+    advisorApiKey: 'sk-test-advisor-glm',
+    advisorMaxTokens: 8000,
+    advisorNoThinking: true
+  };
+  let sentBody;
+  fetchImpl = async (_url, init) => {
+    sentBody = JSON.parse(init.body);
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        choices: [{
+          message: {
+            content: JSON.stringify({
+              risk: 'medium', headline: 'ok', supports: [], against: ['thin data'],
+              watchFor: [], confidence: 'low'
+            })
+          }
+        }]
+      })
+    };
+  };
+
+  const response = await send({ type: 'bbd-advisor-verdict', snapshot: { symbol: 'TEST' } });
+  assert.equal(response.ok, true);
+  assert.equal(sentBody.max_tokens, 8000);
+  assert.deepEqual(sentBody.thinking, { type: 'disabled' });
+});
+
 test('advisor skips fetch when disabled or missing configuration', async () => {
   let fetchCalls = 0;
   fetchImpl = async () => {

@@ -52,6 +52,17 @@ test('buildRequest creates an openai-compatible request without leaking the key'
   assert.equal(request.url.includes(apiKey), false);
   assert.equal(JSON.stringify(request.body).includes(apiKey), false);
   assert.equal(JSON.stringify(otherHeaders).includes(apiKey), false);
+  // Thinking stays on unless explicitly disabled.
+  assert.equal(Object.hasOwn(request.body, 'thinking'), false);
+});
+
+test('buildRequest honours maxTokens and disables thinking on request', () => {
+  const request = BBD.provider.buildRequest(requestOptions({
+    maxTokens: 4096,
+    disableThinking: true
+  }));
+  assert.equal(request.body.max_tokens, 4096);
+  assert.deepEqual(request.body.thinking, { type: 'disabled' });
 });
 
 test('buildRequest creates an anthropic request with native headers and body shape', () => {

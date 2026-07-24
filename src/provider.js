@@ -125,6 +125,20 @@ BBD.provider = (() => {
     // The credential is deliberately used only here, in the adapter's auth
     // header; URLs and bodies are built solely from non-secret inputs.
     if (adapter === OPENAI_ADAPTER) {
+      const body = {
+        model,
+        max_tokens: maxTokens,
+        messages: [
+          { role: 'system', content: system },
+          { role: 'user', content: user }
+        ],
+        response_format: { type: 'json_object' }
+      };
+      // Reasoning models (GLM, Qwen, …) spend the token budget thinking and can
+      // truncate before the JSON answer. When asked, disable it: the reply is
+      // fast and lands the verdict directly. Providers that don't know the field
+      // ignore it, so this stays opt-in.
+      if (options.disableThinking) body.thinking = { type: 'disabled' };
       return {
         url: `${baseUrl}/chat/completions`,
         method: 'POST',
@@ -132,15 +146,7 @@ BBD.provider = (() => {
           Authorization: `Bearer ${apiKey}`,
           'Content-Type': 'application/json'
         },
-        body: {
-          model,
-          max_tokens: maxTokens,
-          messages: [
-            { role: 'system', content: system },
-            { role: 'user', content: user }
-          ],
-          response_format: { type: 'json_object' }
-        }
+        body
       };
     }
 

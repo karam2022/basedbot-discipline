@@ -104,7 +104,13 @@ BBD.DEFAULT_SETTINGS = Object.freeze({
   advisorModel: '',
   advisorApiKey: '',
   advisorOnDump: false,
-  advisorOnBanner: false
+  advisorOnBanner: false,
+  // Reasoning models (GLM-5.x, Qwen, …) spend the token budget thinking, so a
+  // low cap truncates before the JSON verdict. Give headroom, and let the user
+  // disable thinking entirely for a fast, direct answer where the provider
+  // supports it.
+  advisorMaxTokens: 4096,
+  advisorNoThinking: false
 });
 
 // chrome.storage.local keys.

@@ -55,7 +55,10 @@ const advisorVerdict = async (snapshot, requireEnabled = true, connectionOnly = 
       model: settings.advisorModel,
       apiKey: settings.advisorApiKey,
       system: RUBRIC,
-      user: JSON.stringify(snapshot)
+      user: JSON.stringify(snapshot),
+      maxTokens: Number.isInteger(settings.advisorMaxTokens) && settings.advisorMaxTokens > 0
+        ? settings.advisorMaxTokens : undefined,
+      disableThinking: settings.advisorNoThinking === true
     });
   } catch (err) {
     return advisorFailure(err, settings.advisorApiKey);

@@ -60,6 +60,8 @@ const DEFAULTS = {
   advisorApiKey: '',
   advisorOnDump: false,
   advisorOnBanner: false,
+  advisorMaxTokens: 4096,
+  advisorNoThinking: false,
   memeBadges: ['Pons', 'bow.fun', 'Flap', 'Circus', 'Charms', 'Long.xyz', 'Bankr', 'Ape Store',
     'Zora', 'Clanker', 'Flaunch', 'Stroid', 'Klik', 'Trench', 'Livo',
     'Pump.fun', 'PumpFun', 'PumpSwap', 'Bags', 'Meteora DBC'],
@@ -112,7 +114,8 @@ const TOGGLES = {
   advisorToggles: [
     ['advisorEnabled', 'Enable AI advisor', 'Opt-in; requests bill to your provider account'],
     ['advisorOnDump', 'Run on dump alerts'],
-    ['advisorOnBanner', 'Run on take-profit banners']
+    ['advisorOnBanner', 'Run on take-profit banners'],
+    ['advisorNoThinking', 'Disable provider thinking', 'Faster + more reliable on GLM/Qwen reasoning models']
   ]
 };
 
@@ -395,6 +398,13 @@ const init = async () => {
     $(id).value = settings[id] || '';
     $(id).addEventListener('change', () => saveSettings({ [id]: $(id).value.trim() }));
   }
+
+  $('advisorMaxTokens').value = String(settings.advisorMaxTokens || DEFAULTS.advisorMaxTokens);
+  $('advisorMaxTokens').addEventListener('change', () => {
+    const v = Math.round(Number($('advisorMaxTokens').value));
+    if (Number.isInteger(v) && v >= 256 && v <= 32000) saveSettings({ advisorMaxTokens: v });
+    else $('advisorMaxTokens').value = String(settings.advisorMaxTokens || DEFAULTS.advisorMaxTokens);
+  });
 
   providerSelect.addEventListener('change', () => {
     const preset = BBD.provider.PRESETS.find((item) => item.id === providerSelect.value);
