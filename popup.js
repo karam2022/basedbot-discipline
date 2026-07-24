@@ -31,6 +31,8 @@ const DEFAULTS = {
   // Per-card safety readout + risk guards (feed).
   cardIntelEnabled: true,
   priceTickerEnabled: true,
+  scalpReadoutEnabled: true,
+  scalpMaxSellTaxPct: 10,
   creatorGuardEnabled: true,
   creatorMaxLaunches: 5,
   creatorMaxRugs: 2,
@@ -95,6 +97,8 @@ const TOGGLES = {
     ['cardIntelEnabled', '🛡 Per-card safety readout', 'Shows a N/7 safety pill on every Pulse card'],
     ['priceTickerEnabled', 'Live price on token page',
       'Polls the trade tape every ~2.5s — no push socket needed'],
+    ['scalpReadoutEnabled', 'Scalp readout on token page',
+      'Live exit/flow signals for fast flips — no AI, no prediction'],
     ['creatorGuardEnabled', '⚠️ Flag risky creators', 'Marks tokens from serial launchers / past ruggers'],
     ['auditGuardEnabled', '⛔ Flag risky contracts', 'Marks tokens whose contract/hook can drain liquidity']
   ],
@@ -153,6 +157,9 @@ const NUMBERS = {
   creatorFields: [
     ['creatorMaxLaunches', 'Flag creator after N launches', 1, 100, ''],
     ['creatorMaxRugs', '…or after N rugs', 1, 50, '']
+  ],
+  tokenPageFields: [
+    ['scalpMaxSellTaxPct', 'Flag exit blocked over sell tax', 1, 90, '%']
   ],
   fomoFields: [
     ['dailyLossLimit', 'Stop-for-today after N losses', 1, 50, ''],

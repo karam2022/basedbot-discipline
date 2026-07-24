@@ -12,7 +12,7 @@
     intervals.forEach(clearInterval);
     observer.disconnect();
     ['bbd-filter-chip', 'bbd-banner', 'bbd-refresh', 'bbd-intel', 'bbd-advisor',
-      'bbd-advisor-btn', 'bbd-price', 'bbd-fomo', 'bbd-guard-revenge']
+      'bbd-advisor-btn', 'bbd-price', 'bbd-scalp', 'bbd-fomo', 'bbd-guard-revenge']
       .forEach((id) => document.getElementById(id)?.remove());
     document.querySelectorAll('.bbd-hidden, .bbd-gem, .bbd-hot, .bbd-baddev, .bbd-danger, .bbd-override, .bbd-cardintel')
       .forEach((el) => {

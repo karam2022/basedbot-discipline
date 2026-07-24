@@ -37,6 +37,7 @@
         "src/candles.js",
         "src/features.js",
         "src/price.js",
+        "src/scalp.js",
         "src/advisor.js",
         "src/exitalarm.js",
         "src/main.js"

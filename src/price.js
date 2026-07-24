@@ -100,20 +100,25 @@ BBD.price = (() => {
       const addr = BBD.tokenAddrFromHref(path);
       if (!path.includes('/token/') || !addr) {
         hide();
+        if (BBD.scalp) BBD.scalp.hide();
         return;
       }
 
       const settings = await BBD.store.settings();
       if (!BBD.alive()) return;
-      if (!settings.priceTickerEnabled) {
+      if (!settings.priceTickerEnabled && !settings.scalpReadoutEnabled) {
         hide();
+        if (BBD.scalp) BBD.scalp.hide();
         return;
       }
 
       const pool = BBD.feed.poolFor(addr);
       // The page's own load request supplies this routing fact shortly after
       // navigation; keep the last good price visible while waiting for it.
-      if (!pool || !pool.pool) return;
+      if (!pool || !pool.pool) {
+        if (BBD.scalp) BBD.scalp.hide();
+        return;
+      }
 
       const params = new URLSearchParams();
       const route = path.match(/\/token\/([^/]+)\//);
@@ -139,16 +144,27 @@ BBD.price = (() => {
       }
       const trades = (json && json.data) || [];
       BBD.feed.notePrice(addr, trades);
-      const current = BBD.feed.tickFor(addr);
-      if (!current) return;
 
-      const now = Date.now();
-      const candles = BBD.candles.build(trades, {
-        bucketMs: 60 * 1000,
-        now
-      });
-      const changes = BBD.candles.priceChanges(candles, { now });
-      render(current.priceUsd, changes);
+      if (settings.priceTickerEnabled) {
+        const current = BBD.feed.tickFor(addr);
+        if (current) {
+          const now = Date.now();
+          const candles = BBD.candles.build(trades, {
+            bucketMs: 60 * 1000,
+            now
+          });
+          const changes = BBD.candles.priceChanges(candles, { now });
+          render(current.priceUsd, changes);
+        }
+      } else {
+        hide();
+      }
+
+      if (settings.scalpReadoutEnabled && BBD.scalp) {
+        await BBD.scalp.render(addr, trades, settings);
+      } else if (BBD.scalp) {
+        BBD.scalp.hide();
+      }
     } catch (err) {
       // Storage and extension APIs disappear under post-reload orphans; the
       // next healthy script instance owns the badge and polling lifecycle.

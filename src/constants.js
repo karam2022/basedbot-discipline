@@ -49,6 +49,9 @@ BBD.DEFAULT_SETTINGS = Object.freeze({
   // REST-backed live price pill on token pages; the push socket is unreachable
   // from the extension because basedbot runs it inside a Web Worker.
   priceTickerEnabled: true,
+  scalpReadoutEnabled: true,
+  // A sell tax above this makes a fast flip uneconomic, so exit is flagged blocked.
+  scalpMaxSellTaxPct: 10,
   // Per-metric hard hide rules (see BBD.HIDE_METRICS). Each: hide any token
   // whose stat exceeds the max %, regardless of utility. Held tokens and
   // "always show" overrides are never hidden. top-10 on by default; the rest
