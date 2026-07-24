@@ -152,6 +152,42 @@ test('adaptTick returns null for an unrecognised payload shape', () => {
   assert.equal(F.adaptTick({ instrument: 'synthetic', lastUsd: 12.34 }), null);
 });
 
+test('notePrice: the newest confirmed trade becomes the tick, order-independent', (t) => {
+  const realNow = Date.now;
+  t.after(() => { Date.now = realNow; });
+  Date.now = () => 5000;
+  const addr = '0x9999999999999999999999999999999999999999';
+  // Deliberately out of order; the latest timestamp must win regardless.
+  F.notePrice(addr, [
+    { timestamp: '2026-07-24 10:00:00', price_usd: 0.01, is_buy: true },
+    { timestamp: '2026-07-24 10:02:00', price_usd: 0.03, is_buy: false },
+    { timestamp: '2026-07-24 10:01:00', price_usd: 0.02, is_buy: true }
+  ]);
+  assert.deepEqual(F.tickFor(addr), { priceUsd: 0.03, mcapUsd: null, ts: 5000 });
+});
+
+test('notePrice: preconfirm and unpriced rows never set the tick', () => {
+  const addr = '0xaaaa000000000000000000000000000000000000';
+  // Newest row is unconfirmed; next-newest has no usable price.
+  F.notePrice(addr, [
+    { timestamp: '2026-07-24 11:00:03', price_usd: 9, preconfirm: true },
+    { timestamp: '2026-07-24 11:00:02', price_usd: 0 },
+    { timestamp: '2026-07-24 11:00:01', price_usd: 0.5 }
+  ]);
+  assert.equal(F.tickFor(addr).priceUsd, 0.5);
+});
+
+test('notePrice: garbage input is a no-op, not a throw', () => {
+  const addr = '0xbbbb000000000000000000000000000000000000';
+  assert.doesNotThrow(() => {
+    F.notePrice(addr, null);
+    F.notePrice(addr, [{ timestamp: 'nope', price_usd: 1 }]);
+    F.notePrice(addr, [{ price_usd: -1 }, null, 'junk']);
+    F.notePrice('not-an-address', [{ timestamp: '2026-07-24 11:00:00', price_usd: 1 }]);
+  });
+  assert.equal(F.tickFor(addr), null);
+});
+
 test('audit: the real CHIPS token is flagged danger (owner can drain the pool)', () => {
   const chips = {
     chain: 4663, address: '0xf488d799d8bd6e4c875db014976549d745612847',

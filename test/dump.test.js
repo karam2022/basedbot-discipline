@@ -74,7 +74,8 @@ const tickHarness = (t, { addr, pool, response }) => {
   BBD.feed = {
     poolFor: () => pool,
     marketFor: () => null,
-    creatorFor: () => null
+    creatorFor: () => null,
+    notePrice: () => {}
   };
   global.fetch = async (...args) => {
     calls.push(args);

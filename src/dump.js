@@ -99,6 +99,9 @@ BBD.dump = (() => {
         } catch (e) {
           continue; // endpoint hiccup — try again next tick
         }
+        // This poll is the freshest price we get for held tokens (the live swap
+        // socket is unreachable — see feed.notePrice) — feed the tick cache.
+        BBD.feed.notePrice(addr, trades);
         const market = BBD.feed.marketFor(addr);
         const liquidityThreshold = market && typeof market.liq === 'number'
           ? market.liq * settings.whaleSellLiquidityPct / 100 : 0;

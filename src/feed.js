@@ -52,9 +52,11 @@ BBD.feed = (() => {
     return /^[a-z0-9_-]{1,64}$/.test(chain) ? chain : null;
   };
 
-  // The stream body has not been captured yet. Every spelling below is an
-  // unverified candidate; an unknown shape must miss cleanly until a real
-  // message confirms the adapter.
+  // Dormant JSON tick adapter. The real swap socket turned out to be binary
+  // MessagePack with positional (unnamed) fields, running inside a Web Worker
+  // the MAIN-world tap can't reach — so notePrice() (REST) is the live source.
+  // Kept as a named-field decoder in case basedbot ever exposes a JSON socket;
+  // an unknown shape must miss cleanly rather than guess.
   const adaptTick = (raw) => {
     const addressFields = ['address', 'token_address', 'tokenAddress', 'asset', 'token']; // unverified
     const priceFields = ['price_usd', 'priceUsd', 'price', 'usd_price']; // unverified
@@ -202,6 +204,29 @@ BBD.feed = (() => {
       mcapUsd: tick.mcapUsd,
       ts: Date.now()
     });
+    prune(ticks);
+  };
+
+  // REST is the live price source: the swap WebSocket runs inside a Web Worker
+  // (see docs/dump-alerts.md) so the MAIN-world tap never sees it. dump.js polls
+  // the tape for held positions anyway — feed the newest confirmed trade's
+  // price_usd straight into the same cache the price consumers read. No market
+  // cap on a trade row, so that stays null.
+  const notePrice = (addr, trades) => {
+    if (!isAddr(addr) || !Array.isArray(trades)) return;
+    let bestTs = -Infinity;
+    let bestPrice = null;
+    for (const t of trades) {
+      if (!t || typeof t !== 'object' || t.preconfirm === true) continue;
+      const ts = BBD.parseTradeTimestamp(t.timestamp);
+      if (ts === null || ts <= bestTs) continue;
+      const price = usd(t.price_usd);
+      if (price === null || price <= 0) continue;
+      bestTs = ts;
+      bestPrice = price;
+    }
+    if (bestPrice === null) return;
+    ticks.set(normAddr(addr), { priceUsd: bestPrice, mcapUsd: null, ts: Date.now() });
     prune(ticks);
   };
 
@@ -362,7 +387,7 @@ BBD.feed = (() => {
 
   return {
     statsFor, titlesFor, creatorFor, marketFor, auditFor, priceOf, ethPrice,
-    tickFor, adaptTick, heldPositions, hasBalances, hasFreshBalances, balancesUpdatedAt,
+    tickFor, adaptTick, notePrice, heldPositions, hasBalances, hasFreshBalances, balancesUpdatedAt,
     poolFor
   };
 })();
