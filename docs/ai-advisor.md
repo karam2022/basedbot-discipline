@@ -179,106 +179,94 @@ raten.
 
 ---
 
-## Phase 4 — Proxy in `vps-watcher/`
+## Revision (2026-07-24): Bring-your-own-Key, kein Proxy
 
-Der API-Key darf **nicht** in die Extension. Jede installierte Extension ist
-entpackt lesbar; ein eingebetteter Key ist binnen Tagen abgegriffen und wird
-auf fremde Rechnung verbraten. `vps-watcher/` läuft bereits als
-systemd-Service (`basedbot-watcher.service`) und ist der natürliche Ort.
+Der ursprüngliche Plan sah einen VPS-Proxy vor, weil ein **geteilter**
+Entwickler-Key aus jeder entpackten Extension abgreifbar wäre. Die gewählte
+Architektur ist stattdessen **BYO-Key**: jeder User wählt seinen Anbieter und
+trägt seinen **eigenen** Key ein. Der liegt dann in dessen eigenem
+`chrome.storage.local` — dasselbe Modell wie das bestehende `tgToken`, das
+schon so gehandhabt wird (Storage → nur in `background.js` benutzt → nie im
+Content-Script). Damit entfällt der VPS komplett: kein Server, kein systemd,
+kein Shared Secret. Phase 4/5 unten sind entsprechend neu gefasst.
 
-**`vps-watcher/advisor.mjs`** — kleiner HTTP-Endpoint neben dem Watcher-Loop:
+## Phase 4 — Provider-Layer + Background-Handler (clientseitig)
+
+Der Key darf nie ins MAIN world: sonst läse basedbot.app ihn selbst aus. Also
+läuft der Call über `background.js` (wie Telegram), der Snapshot fließt
+Content → Background, der Key bleibt im Background.
+
+**Zwei Request-Formen decken „fast alle bekannten KI" ab:**
+
+- **OpenAI-kompatibel** (`POST {baseUrl}/chat/completions`, `Authorization:
+  Bearer`): OpenAI, GLM (Zhipu, `open.bigmodel.cn/api/paas/v4`), Kimi/Moonshot
+  (`api.moonshot.cn/v1`), DeepSeek, OpenRouter, lokale Modelle — **und Google
+  Gemini** über dessen OpenAI-Endpoint (`…/v1beta/openai`). Eine Form, viele
+  Anbieter.
+- **Anthropic nativ** (`POST {baseUrl}/v1/messages`, `x-api-key`,
+  `anthropic-version`): Claude.
+
+**`src/provider.js` (pur, testbar):** die gesamte Anbieter-Logik ohne DOM,
+`chrome.*` oder `fetch`, damit sie unter `node:test` läuft.
 
 ```js
-import Anthropic from '@anthropic-ai/sdk';
-const client = new Anthropic(); // liest ANTHROPIC_API_KEY aus der Umgebung
+BBD.provider = {
+  PRESETS,                                   // Anbieter → { adapter, baseUrl, defaultModel }
+  buildRequest({ adapter, baseUrl, model, apiKey, system, user }),  // → { url, headers, body }
+  parseResponse({ adapter, status, json }),  // → { text } | { error }
+  extractVerdict(text)                        // → Verdict | null (defensiv, ersetzt Schema)
+};
 ```
 
-Request an das Modell:
+`extractVerdict` ist der Ersatz für Anthropics Structured Outputs: nicht jeder
+Anbieter garantiert JSON. Also erstes balanciertes `{…}` aus der Antwort
+ziehen (auch aus ```json-Fences), parsen, gegen die Verdict-Form validieren,
+bei Unbrauchbarem `null`. `response_format: {type:'json_object'}` wird auf der
+OpenAI-Seite mitgeschickt, wo unterstützt, aber der Parser verlässt sich nicht
+darauf.
 
-```js
-const verdict = await client.messages.create({
-  model: 'claude-opus-4-8',
-  max_tokens: 1200,
-  system: [{ type: 'text', text: RUBRIC }],
-  output_config: {
-    effort: 'low',
-    format: { type: 'json_schema', schema: VERDICT_SCHEMA },
-  },
-  messages: [{ role: 'user', content: JSON.stringify(snapshot) }],
-});
-```
+**`background.js`:** dünner Handler `bbd-advisor-verdict` — liest Key aus
+Storage, ruft via `provider.buildRequest`/`parseResponse` den Endpoint, gibt
+das Verdict zurück. Key wird nie geloggt, nie an den Absender-Tab
+weitergereicht (nur das Verdict).
 
-Begründung der Parameter:
+**`manifest.json`:** `optional_host_permissions` statt fester Hosts (der User
+kann jede Base-URL eintragen); die konkrete Origin wird beim Speichern der
+Einstellungen per `chrome.permissions.request` angefragt. Der Background-Fetch
+mit Host-Permission umgeht CORS — noch ein Grund, warum der Call dort und nicht
+im Content-Script sitzt.
 
-- **`claude-opus-4-8`** — 1M Kontext, $5/$25 pro MTok.
-- **`output_config.format`** mit JSON-Schema statt Freitext-Parsing. Garantiert
-  parsebare Ausgabe; kein Regex auf Modellprosa. (Assistant-Prefill ist auf
-  Opus 4.8 nicht mehr erlaubt und würde 400 werfen — Structured Outputs sind
-  ohnehin der richtige Ersatz.)
-- **`effort: 'low'`** für den Live-Pfad: kurze, schnelle Verdicts. Der
-  Journal-Rückblick (unten) läuft dagegen mit `thinking: { type: 'adaptive' }`
-  und `effort: 'high'` — dort ist Latenz egal und Tiefe erwünscht.
-- **Kein `temperature`/`top_p`.** Sampling-Parameter werden auf Opus 4.8 mit
-  400 abgelehnt; Steuerung läuft über den Prompt.
-- `max_tokens: 1200` ist bewusst niedrig — die Ausgabe ist ein kurzes
-  strukturiertes Verdict, kein Aufsatz.
+**Kosten** laufen jetzt auf dem **eigenen Konto des Users** — kein geteiltes
+Budget. Der clientseitige Dedup-Cache (Phase 5) bleibt trotzdem: er spart dem
+User Tokens, nicht uns.
 
-`VERDICT_SCHEMA` (Kern):
+**Verdict-Form** (anbieterunabhängig, per `extractVerdict` validiert):
 
 ```json
 {
-  "type": "object",
-  "properties": {
-    "risk":      { "type": "string", "enum": ["low", "medium", "high", "critical"] },
-    "headline":  { "type": "string" },
-    "supports":  { "type": "array", "items": { "type": "string" } },
-    "against":   { "type": "array", "items": { "type": "string" } },
-    "watchFor":  { "type": "array", "items": { "type": "string" } },
-    "confidence":{ "type": "string", "enum": ["low", "medium", "high"] }
-  },
-  "required": ["risk", "headline", "supports", "against", "watchFor", "confidence"],
-  "additionalProperties": false
+  "risk":       "low | medium | high | critical",
+  "headline":   "ein Satz",
+  "supports":   ["..."],
+  "against":    ["..."],
+  "watchFor":   ["..."],
+  "confidence": "low | medium | high"
 }
 ```
 
-**Bewusst nicht im Schema: ein `action`-Feld mit `buy`/`sell`.** Begründung
-unten unter "Grenzen".
-
-`against` ist Pflichtfeld, nicht optional — das Modell muss zu jeder
+**`against` ist Pflicht, kein optionales Feld** — das Modell muss zu jeder
 Einschätzung Gegenargumente liefern. Das ist die wirksamste Bremse gegen
-Ausgaben, die sicherer klingen als die Datenlage hergibt.
+Ausgaben, die sicherer klingen als die Datenlage hergibt. **Bewusst kein
+`action: buy/sell`** (Begründung unter „Grenzen"). `extractVerdict` verwirft
+eine Antwort, der `against` oder `risk` fehlt.
 
-Weitere Proxy-Aufgaben:
+**Prompt statt Sampling-Parameter:** `temperature`/`top_p` werden nicht gesetzt
+(manche Anbieter lehnen sie ab, andere deuten sie anders) — Steuerung läuft
+über den System-Prompt (`RUBRIC`). `max_tokens` bewusst niedrig (~1200): die
+Ausgabe ist ein kurzes Verdict, kein Aufsatz.
 
-- Shared secret zwischen Extension und Proxy (`config.json`), damit der
-  Endpoint nicht offen im Netz steht.
-- Rate-Limit pro Token-Adresse (z. B. max. 1 Verdict/2 min) und globales
-  Tageslimit — schützt gegen versehentliche Kostenexplosion durch eine
-  Endlosschleife im Content-Script.
-- Verdict-Cache serverseitig, gekeyed auf `(addr, gerundeter Feature-Hash)`.
-
-**`host_permissions`** in `manifest.json` muss um den Proxy-Host erweitert
-werden.
-
-### Kosten
-
-Snapshot ~1.500 Input-Tokens, Verdict ~400 Output-Tokens:
-
-```
-1.500 × $5/1M  = $0,0075
-  400 × $25/1M = $0,0100
-                 ─────────
-                 ≈ $0,018 pro Analyse  (~1,8 Cent)
-```
-
-100 Analysen/Tag ≈ $1,80/Tag. Deshalb **on-demand**, nicht pro Feed-Tick — bei
-70 Tokens pro Pulse-Refresh wären das $1,26 pro Reload.
-
-Zum Prompt-Caching: der Break-even liegt bei zwei Requests, aber das
-Minimum für einen cachebaren Prefix ist auf Opus 4.8 **4096 Tokens**. Kürzere
-System-Prompts cachen still nicht — kein Fehler, nur `cache_creation_input_tokens: 0`.
-Erst prüfen, ob `RUBRIC` diese Größe überhaupt erreicht, bevor
-`cache_control` gesetzt wird.
+**Kosten** trägt der User auf seinem eigenen Konto und hängen vom gewählten
+Modell ab — die Extension zeigt keine Preise an, sondern hält den Call
+on-demand (Button/Event, nie pro Tick) und dedupt über den Cache in Phase 5.
 
 ---
 
@@ -300,8 +288,10 @@ Rendering in `banner.js`: `risk` als farbiger Chip, `headline` als eine Zeile,
 hinter einem Klick versteckt.
 
 Settings in `constants.js`/`popup.js`, im bestehenden schemagetriebenen Stil:
-`advisorEnabled` (default `false` — Opt-in, weil kostenpflichtig),
-`advisorUrl`, `advisorSecret`, `advisorOnDump`, `advisorOnBanner`.
+`advisorEnabled` (default `false` — Opt-in, kostenpflichtig auf dem eigenen
+Konto), `advisorProvider` (Preset-Auswahl), `advisorBaseUrl`, `advisorModel`,
+`advisorApiKey`, `advisorOnDump`, `advisorOnBanner`. Der Key wird — wie
+`tgToken` — nur aus dem Background gelesen, nie im Content-Script.
 
 ---
 
@@ -350,7 +340,7 @@ vermutlich der ehrlichste Nutzen von KI in diesem Projekt.
 | 1 | WebSocket-Tap | echter Live-Preis für TP/SL/Peak | — |
 | 2 | `candles.js` | Buy-Ratio & Unique-Buyer sind eigenständige Signale | 1 |
 | 3 | `features.js` | — | 1, 2 |
-| 4 | Proxy | — | 3 |
+| 4 | Provider-Layer + Background (BYO-Key) | — | 3 |
 | 5 | `advisor.js` + UI | das eigentliche Feature | 4 |
 | 6 | Kalibrierung | belegt, ob Phase 5 etwas taugt | 5 + Zeit |
 
