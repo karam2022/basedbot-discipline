@@ -202,6 +202,41 @@ textarea {
 }
 #journalSummary .field.strong { color: var(--ink); font-weight: 500; }
 
+/* ---- Advisor calibration ---------------------------------------------- */
+.calibration-headline {
+  border: 1px solid var(--line-strong);
+  padding: 8px 9px;
+  margin-bottom: 8px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+.calibration-headline.not-ready {
+  border-color: var(--ink);
+  font-weight: 600;
+}
+.calibration-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+  border-top: 1px dotted var(--line);
+  font-family: var(--mono);
+  font-size: 10.5px;
+}
+.calibration-level { flex: 1; }
+.calibration-grade {
+  flex: none;
+  border: 1px solid var(--line-strong);
+  border-radius: 2px;
+  padding: 1px 5px;
+  color: var(--muted);
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.calibration-grade.directional { border-style: dashed; color: var(--ink); }
+.calibration-grade.signal { border-color: var(--ink); color: var(--ink); font-weight: 500; }
+
 /* ---- Text-link buttons (journal export / clear) ------------------------ */
 .linkbtn {
   font-family: var(--mono); font-size: 10px; letter-spacing: 0.08em;

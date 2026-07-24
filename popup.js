@@ -322,8 +322,7 @@ const summarizeJournal = (journal) => {
   };
 };
 
-const renderJournal = async () => {
-  const { journal = {} } = await chrome.storage.local.get('journal');
+const renderJournal = (journal) => {
   const s = summarizeJournal(journal);
   const wrap = $('journalSummary');
   wrap.innerHTML = '';
@@ -339,6 +338,49 @@ const renderJournal = async () => {
   // The flagship discipline metric: profit ridden past the exit.
   line('Avg profit given back', `${s.avgGiveBackPct}%`, true);
   if (s.unknownExitCount) line('Closed without fresh exit', String(s.unknownExitCount));
+};
+
+const CALIBRATION_LEVELS = ['low', 'medium', 'high', 'critical'];
+
+const calibrationHeadline = (report) => {
+  if (!report.ready) return `Not enough data yet — ${report.readyReason}.`;
+  if (report.trend === 'expected') {
+    return 'Higher risk tracked higher loss rate — preliminary.';
+  }
+  if (report.trend === 'inverted') {
+    return 'Warning: higher risk tracked a lower loss rate — preliminary inversion.';
+  }
+  return 'Warning: risk levels showed a mixed loss-rate pattern — preliminary.';
+};
+
+const renderCalibration = (journal) => {
+  const report = BBD.calibration.analyze(journal, { now: Date.now() });
+  const wrap = $('advisorCalibration');
+  wrap.replaceChildren();
+
+  wrap.append(el('div',
+    `calibration-headline ${report.ready ? 'ready' : 'not-ready'}`,
+    calibrationHeadline(report)));
+
+  for (const level of CALIBRATION_LEVELS) {
+    const stats = report.levels[level];
+    if (!stats) continue;
+    const row = el('div', 'calibration-row');
+    row.append(
+      el('span', 'calibration-level',
+        `Risk: ${level} — n=${stats.n}, loss ${stats.lossRatePct}%, avg ${stats.avgExitPct}%`),
+      el('span', `calibration-grade ${stats.grade}`, stats.grade)
+    );
+    wrap.append(row);
+  }
+
+  wrap.append(
+    el('div', 'hint',
+      `${report.confounding.possiblyActedOn} trades closed within ` +
+      `${report.confounding.windowMin} min of a high/critical warning — ` +
+      'may reflect you acting on it, not the model being wrong.'),
+    el('div', 'hint', 'Earliest verdict per trade; exits are fresh PnL estimates.')
+  );
 };
 
 const renderHealth = async () => {
@@ -480,7 +522,9 @@ const init = async () => {
   renderHideRules(settings);
   renderBadges(settings);
   renderOverrides();
-  renderJournal();
+  const { journal = {} } = await chrome.storage.local.get('journal');
+  renderJournal(journal);
+  renderCalibration(journal);
   renderHealth();
 
   $('exportJournal').addEventListener('click', async () => {
@@ -497,7 +541,8 @@ const init = async () => {
   $('clearJournal').addEventListener('click', async () => {
     if (!confirm('Delete the local trade journal? Export it first if you may need it.')) return;
     await chrome.storage.local.set({ journal: {} });
-    renderJournal();
+    renderJournal({});
+    renderCalibration({});
   });
 };
 
