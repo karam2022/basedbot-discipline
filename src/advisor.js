@@ -366,6 +366,18 @@ BBD.advisor = (() => {
     if (result && result.ok === true && record(result.verdict)) {
       renderVerdict(addr, result.verdict);
       await cacheVerdict(addr, featureBucket, result.verdict);
+      // Log a fresh verdict against the open trade so Phase 6b can score the
+      // model against the exit. Held tokens only — a token you don't hold has
+      // no trade cycle to correlate with. Cache hits skip this (they returned
+      // above), so a re-read doesn't double-log the same call.
+      const position = heldPosition(addr);
+      if (position && position.positionKey && BBD.journal && BBD.journal.noteAdvisor) {
+        try {
+          await BBD.journal.noteAdvisor(position.positionKey, result.verdict);
+        } catch (err) {
+          // Calibration logging is best-effort; never break the risk read.
+        }
+      }
       return result.verdict;
     }
     if (result && result.ok === false && typeof result.reason === 'string') {

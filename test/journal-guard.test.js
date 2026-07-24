@@ -114,3 +114,51 @@ test('position identity separates chains and wallets', () => {
     BBD.positionKey(addr, 'base', 'wallet2')
   );
 });
+
+test('noteAdvisor appends compact verdicts to the open trade and caps them', async (t) => {
+  const s = BBD.DEFAULT_SETTINGS;
+  const key = BBD.positionKey('0xabcdef123456', 'base', '0x111111111111');
+  const held = pos(key, 3.0, 30_000);
+  let stored = BBD.journal.reconcileState({}, {}, { [key]: held }, s, 30_000);
+
+  const origGet = BBD.store.get;
+  const origSet = BBD.store.set;
+  t.after(() => { BBD.store.get = origGet; BBD.store.set = origSet; });
+  BBD.store.get = async () => stored;
+  BBD.store.set = async (_key, value) => { stored = value; };
+
+  await BBD.journal.noteAdvisor(key, { risk: 'high', confidence: 'medium', headline: 'Concentration high' });
+  let open = Object.values(stored).find((e) => e.status === 'open');
+  assert.equal(open.advisorVerdicts.length, 1);
+  assert.equal(open.advisorVerdicts[0].risk, 'high');
+  assert.equal(open.advisorVerdicts[0].confidence, 'medium');
+  assert.equal(open.advisorVerdicts[0].headline, 'Concentration high');
+  assert.equal(typeof open.advisorVerdicts[0].ts, 'number');
+
+  // A verdict without a usable risk is ignored.
+  await BBD.journal.noteAdvisor(key, { confidence: 'low' });
+  open = Object.values(stored).find((e) => e.status === 'open');
+  assert.equal(open.advisorVerdicts.length, 1);
+
+  // Capped at 20, keeping the most recent.
+  for (let i = 0; i < 25; i++) {
+    await BBD.journal.noteAdvisor(key, { risk: 'low', headline: `n${i}` });
+  }
+  open = Object.values(stored).find((e) => e.status === 'open');
+  assert.equal(open.advisorVerdicts.length, 20);
+  assert.equal(open.advisorVerdicts[open.advisorVerdicts.length - 1].headline, 'n24');
+});
+
+test('noteAdvisor is a no-op when the position has no open trade', async (t) => {
+  const key = BBD.positionKey('0xabcdef123456', 'base', '0x111111111111');
+  let stored = {};
+  const origGet = BBD.store.get;
+  const origSet = BBD.store.set;
+  let setCalls = 0;
+  t.after(() => { BBD.store.get = origGet; BBD.store.set = origSet; });
+  BBD.store.get = async () => stored;
+  BBD.store.set = async (_key, value) => { setCalls += 1; stored = value; };
+
+  await BBD.journal.noteAdvisor(key, { risk: 'high' });
+  assert.equal(setCalls, 0);
+});

@@ -200,6 +200,33 @@ BBD.journal = (() => {
     await BBD.store.set(BBD.KEYS.journal, current);
   };
 
+  // Attach an AI verdict to the open trade for this position, so a later pass
+  // can score the model against the eventual exit (Phase 6b). Only risk /
+  // confidence / headline are kept — the outcome correlation needs the rating,
+  // not the prose — and the list is capped so a token watched all day can't
+  // bloat one entry. No open trade means nothing to correlate against, so skip.
+  const MAX_ADVISOR_VERDICTS = 20;
+  const noteAdvisor = async (positionKey, verdict) => {
+    if (!positionKey || !verdict || typeof verdict !== 'object') return;
+    const risk = typeof verdict.risk === 'string' ? verdict.risk : null;
+    if (!risk) return;
+    const current = normalize(await BBD.store.get(BBD.KEYS.journal, {}));
+    const targetAddr = BBD.positionAddr(positionKey, null);
+    const open = Object.values(current).find((e) => e.status === 'open' &&
+      (e.positionKey === positionKey || e.addr === targetAddr));
+    if (!open) return;
+    const record = {
+      ts: Date.now(),
+      risk,
+      confidence: typeof verdict.confidence === 'string' ? verdict.confidence : null,
+      headline: typeof verdict.headline === 'string' ? verdict.headline.slice(0, 200) : ''
+    };
+    const prior = Array.isArray(open.advisorVerdicts) ? open.advisorVerdicts : [];
+    const advisorVerdicts = [...prior, record].slice(-MAX_ADVISOR_VERDICTS);
+    current[open.tradeId] = { ...open, advisorVerdicts };
+    await BBD.store.set(BBD.KEYS.journal, current);
+  };
+
   const latestClosedFor = (rawJournal, addr, chain) => Object.values(normalize(rawJournal))
     .filter((e) => e.status === 'closed' && e.addr === addr &&
       (!chain || !e.chain || String(e.chain).toLowerCase() === String(chain).toLowerCase()))
@@ -229,6 +256,6 @@ BBD.journal = (() => {
   };
 
   return {
-    normalize, reconcileState, reconcile, onHeld, onClosed, latestClosedFor, summarize
+    normalize, reconcileState, reconcile, onHeld, onClosed, noteAdvisor, latestClosedFor, summarize
   };
 })();
