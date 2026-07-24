@@ -301,7 +301,7 @@ test('extractVerdict returns null for non-strings, garbage, and invalid JSON', (
 
 test('PRESETS expose the required providers and only known adapters', () => {
   const requiredIds = [
-    'openai', 'anthropic', 'gemini', 'glm',
+    'openai', 'anthropic', 'gemini', 'glm', 'glm-coding',
     'kimi', 'deepseek', 'openrouter', 'custom'
   ];
   assert.deepEqual(BBD.provider.PRESETS.map((preset) => preset.id), requiredIds);

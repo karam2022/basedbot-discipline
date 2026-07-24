@@ -406,15 +406,25 @@ const init = async () => {
     else $('advisorMaxTokens').value = String(settings.advisorMaxTokens || DEFAULTS.advisorMaxTokens);
   });
 
-  providerSelect.addEventListener('change', () => {
+  providerSelect.addEventListener('change', async () => {
     const preset = BBD.provider.PRESETS.find((item) => item.id === providerSelect.value);
     $('advisorBaseUrl').value = preset ? preset.baseUrl : '';
     $('advisorModel').value = preset ? preset.defaultModel : '';
-    saveSettings({
+    // Thinking-disable follows the preset: on for GLM's reasoning models, off
+    // for the rest — leaving it on would make providers that reject an unknown
+    // `thinking` field (e.g. OpenAI) 400. Re-render the toggles so the checkbox
+    // reflects the change.
+    const noThinking = !!(preset && preset.noThinking);
+    await saveSettings({
       advisorProvider: providerSelect.value,
       advisorBaseUrl: $('advisorBaseUrl').value.trim(),
-      advisorModel: $('advisorModel').value.trim()
+      advisorModel: $('advisorModel').value.trim(),
+      advisorNoThinking: noThinking
     });
+    const box = $('advisorToggles');
+    box.replaceChildren();
+    const fresh = await loadSettings();
+    TOGGLES.advisorToggles.forEach(([k, label, sub]) => box.append(renderToggle(k, label, sub, fresh)));
   });
 
   const setAdvisorStatus = (text) => {

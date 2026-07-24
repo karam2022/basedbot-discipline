@@ -38,7 +38,18 @@ BBD.provider = (() => {
       label: 'GLM (Zhipu)',
       adapter: OPENAI_ADAPTER,
       baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
-      defaultModel: 'glm-4-plus'
+      defaultModel: 'glm-4.5-air',
+      // GLM-4.5+ are hybrid reasoners; disabling thinking keeps the verdict
+      // fast and stops a long think from truncating it. See advisorNoThinking.
+      noThinking: true
+    },
+    {
+      id: 'glm-coding',
+      label: 'GLM (z.ai Coding)',
+      adapter: OPENAI_ADAPTER,
+      baseUrl: 'https://api.z.ai/api/coding/paas/v4',
+      defaultModel: 'GLM-4.5-Air',
+      noThinking: true
     },
     {
       id: 'kimi',
