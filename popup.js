@@ -74,6 +74,9 @@ const DEFAULTS = {
   cohortReadoutEnabled: true,
   cohortMinWallets: 12,
   cohortEarlyWindowSec: 60,
+  holderReadoutEnabled: true,
+  holderMinCount: 20,
+  holderClusterMinWallets: 3,
   memeBadges: ['Pons', 'bow.fun', 'Flap', 'Circus', 'Charms', 'Long.xyz', 'Bankr', 'Ape Store',
     'Zora', 'Clanker', 'Flaunch', 'Stroid', 'Klik', 'Trench', 'Livo',
     'Pump.fun', 'PumpFun', 'PumpSwap', 'Bags', 'Meteora DBC'],
@@ -108,6 +111,8 @@ const TOGGLES = {
       'Live exit/flow signals for fast flips — no AI, no prediction'],
     ['cohortReadoutEnabled', 'Wallet-behaviour readout',
       'Early-wallet exits, flip rate and one-trade wallets — needs minutes of open tape'],
+    ['holderReadoutEnabled', 'Holder-list readout',
+      'Funding clusters (real concentration) and share of holders in profit — aggregate only'],
     ['creatorGuardEnabled', '⚠️ Flag risky creators', 'Marks tokens from serial launchers / past ruggers'],
     ['auditGuardEnabled', '⛔ Flag risky contracts', 'Marks tokens whose contract/hook can drain liquidity']
   ],

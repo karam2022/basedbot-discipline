@@ -269,8 +269,38 @@ BBD.scalp = (() => {
         ));
       }
 
-      el.replaceChildren(exitLine, signalLine, ...(cohortLine.childNodes.length
-        ? [cohortLine] : []));
+      // Holder facts from the holder list rather than the tape: real
+      // concentration (wallets fed from one source) and exit pressure (share
+      // of holders sitting in profit). Both stay silent when the data is thin
+      // or, in the funder case, simply absent for this token.
+      const holdersLine = document.createElement('div');
+      holdersLine.className = 'bbd-scalp-signals';
+      const book = BBD.holders && settings && settings.holderReadoutEnabled !== false
+        ? BBD.holders.analyze(BBD.feed.holdersFor(addr), {
+          minHolders: settings.holderMinCount,
+          minClusterWallets: settings.holderClusterMinWallets
+        })
+        : null;
+      if (book && book.enough) {
+        if (book.topClusterWallets >= 2 && book.topClusterPct !== null) {
+          holdersLine.appendChild(signal(
+            `Cluster ${book.topClusterWallets}w ${book.topClusterPct}%`,
+            book.topClusterPct >= 10 ? 'bbd-scalp-bad' : 'bbd-scalp-warn'
+          ));
+        }
+        if (book.inProfitPct !== null) {
+          // A book mostly in profit is primed to take gains — exit pressure,
+          // not reassurance — so a high share reads as a caution here.
+          holdersLine.appendChild(signal(
+            `In profit ${book.inProfitPct}%`,
+            book.inProfitPct >= 70 ? 'bbd-scalp-warn' : 'bbd-scalp-mut'
+          ));
+        }
+      }
+
+      el.replaceChildren(exitLine, signalLine,
+        ...(cohortLine.childNodes.length ? [cohortLine] : []),
+        ...(holdersLine.childNodes.length ? [holdersLine] : []));
       el.style.display = 'block';
     } catch (err) {
       // A malformed tape row or disappearing extension API must not stop the

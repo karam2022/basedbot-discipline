@@ -379,3 +379,27 @@ test('the tape buffer drops rows older than its retention window', () => {
   F.noteTrades(addr, [old, fresh]);
   assert.deepEqual(F.tapeFor(addr).map((r) => r.txHash), ['fresh']);
 });
+
+test('the holder list caches lean rows and reports its age', () => {
+  const addr = '0xda7a000000000000000000000000000000000001';
+  assert.equal(F.holdersAgeMs(addr), Infinity); // never fetched
+  assert.deepEqual(F.holdersFor(addr), []);
+
+  F.noteHolders(addr, [
+    { percentage: 1.5, total_pnl_usd: 200, funding_source_address_full: '0xAAA',
+      entity_logo: 'https://x/y.png', platform_name: 'noise' },
+    { percentage: 0.5, total_pnl_usd: -10 }
+  ]);
+  const rows = F.holdersFor(addr);
+  assert.equal(rows.length, 2);
+  // Only the four aggregate fields are retained; the logo/platform noise is not.
+  assert.deepEqual(Object.keys(rows[0]).sort(),
+    ['funding_source_address', 'funding_source_address_full', 'percentage', 'total_pnl_usd']);
+  assert.equal(rows[0].percentage, 1.5);
+  assert.equal(rows[0].funding_source_address_full, '0xAAA');
+  assert.ok(F.holdersAgeMs(addr) < 1000);
+
+  // A checksummed caller reads the same entry.
+  assert.equal(F.holdersFor(addr.toUpperCase().replace('0X', '0x')).length, 2);
+  assert.deepEqual(F.holdersFor('not-an-address'), []);
+});

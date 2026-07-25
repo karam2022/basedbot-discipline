@@ -312,6 +312,42 @@ BBD.feed = (() => {
     return entry ? entry.rows : [];
   };
 
+  // The holder list drifts as PnL moves with price, so it is refetched on a
+  // slow cadence rather than cached once — and kept in memory only, since it is
+  // cheap to refetch and never worth persisting stale. Only the four fields the
+  // aggregate needs are retained; the raw row also carries logos and links.
+  const holders = new Map(); // addr -> { rows, ts }
+
+  const noteHolders = (addr, rows) => {
+    if (!isAddr(addr) || !Array.isArray(rows)) return;
+    const lean = [];
+    for (const h of rows) {
+      if (!h || typeof h !== 'object') continue;
+      lean.push({
+        percentage: h.percentage,
+        total_pnl_usd: h.total_pnl_usd,
+        funding_source_address_full: typeof h.funding_source_address_full === 'string'
+          ? h.funding_source_address_full : undefined,
+        funding_source_address: typeof h.funding_source_address === 'string'
+          ? h.funding_source_address : undefined
+      });
+    }
+    holders.set(normAddr(addr), { rows: lean, ts: Date.now() });
+    prune(holders);
+  };
+
+  const holdersFor = (addr) => {
+    const entry = addr && holders.get(normAddr(addr));
+    return entry ? entry.rows : [];
+  };
+
+  // Infinity when never fetched, so the caller can distinguish "due for a
+  // refresh" from "fetched moments ago" without a second lookup.
+  const holdersAgeMs = (addr) => {
+    const entry = addr && holders.get(normAddr(addr));
+    return entry ? Date.now() - entry.ts : Infinity;
+  };
+
   // Distinguishes "no launch data" from "fetched and empty", so the caller
   // knows whether retrying is worth a request.
   const hasLaunch = (addr) => !!(addr && launch.has(normAddr(addr)));
@@ -620,6 +656,7 @@ BBD.feed = (() => {
     statsFor, titlesFor, creatorFor, marketFor, auditFor, priceOf, ethPrice,
     tickFor, adaptTick, notePrice, noteTrades, tapeFor, hydrateTapes, flushTapes,
     noteLaunch, launchFor, hasLaunch,
+    noteHolders, holdersFor, holdersAgeMs,
     heldPositions, hasBalances, hasFreshBalances, balancesUpdatedAt,
     poolFor
   };

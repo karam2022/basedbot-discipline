@@ -136,7 +136,13 @@ BBD.DEFAULT_SETTINGS = Object.freeze({
   // a percentage computed over a handful of wallets.
   cohortReadoutEnabled: true,
   cohortMinWallets: 12,
-  cohortEarlyWindowSec: 60
+  cohortEarlyWindowSec: 60,
+  // Holder-list enrichment: real concentration (wallets sharing one funding
+  // source) and exit pressure (share of holders in profit). Refetched slowly
+  // on its own cadence; aggregate-only, no address ever leaves the browser.
+  holderReadoutEnabled: true,
+  holderMinCount: 20,
+  holderClusterMinWallets: 3
 });
 
 // chrome.storage.local keys.

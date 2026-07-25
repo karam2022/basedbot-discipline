@@ -38,6 +38,7 @@
         "src/features.js",
         "src/price.js",
         "src/cohort.js",
+        "src/holders.js",
         "src/scalp.js",
         "src/riskfloor.js",
         "src/advisor.js",

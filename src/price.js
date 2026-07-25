@@ -28,6 +28,32 @@ BBD.price = (() => {
     }
   };
 
+  const HOLDERS_TTL_MS = 45 * 1000; // holder PnL drifts; refresh, don't spam
+  const holdersInFlight = new Set();
+
+  // The holder list is a separate endpoint from the tape, keyed by chain only.
+  // It is refreshed on its own slow cadence rather than every 2.5s poll, and an
+  // in-flight guard stops the fast poll from firing overlapping refetches.
+  const fetchHolders = async (addr, chain) => {
+    const key = addr.startsWith('0x') ? addr.toLowerCase() : addr;
+    try {
+      if (holdersInFlight.has(key) || BBD.feed.holdersAgeMs(addr) < HOLDERS_TTL_MS) return;
+      holdersInFlight.add(key);
+      const params = new URLSearchParams();
+      if (chain) params.set('chain', chain);
+      const res = await fetch(`/api/token/${addr}/holders?${params}`, {
+        credentials: 'same-origin'
+      });
+      if (!res.ok) return;
+      const json = await res.json();
+      BBD.feed.noteHolders(addr, (json && json.data) || []);
+    } catch (err) {
+      // Holder enrichment is optional; its failure never touches the price poll.
+    } finally {
+      holdersInFlight.delete(key);
+    }
+  };
+
   const hide = () => {
     const el = document.getElementById('bbd-price');
     if (el) el.style.display = 'none';
@@ -158,6 +184,10 @@ BBD.price = (() => {
       // The oldest page never changes, so it is fetched once per token and
       // then served from cache — including across reloads.
       fetchLaunch(addr, params);
+      // Holder enrichment only runs when the readout that consumes it is on.
+      if (settings.scalpReadoutEnabled && settings.holderReadoutEnabled !== false) {
+        fetchHolders(addr, chain);
+      }
 
       let response;
       try {
