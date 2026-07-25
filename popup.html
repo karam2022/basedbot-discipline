@@ -101,6 +101,11 @@
         placeholder="stored locally" autocomplete="off" /></div>
     <div class="row"><span class="label">Max tokens</span>
       <span class="field"><input type="number" id="advisorMaxTokens" min="256" max="32000" step="1" /></span></div>
+    <div class="row"><span class="label">Rate risk over</span>
+      <span class="field"><input type="number" id="advisorHorizonMin" min="1" max="240" step="1" /> min</span></div>
+    <div class="hint">The verdict is rated for how long you actually hold. Short windows
+      ignore long-term concerns like liquidity ratios and treat only what can go wrong
+      while you are in.</div>
     <div class="row" style="margin-top:6px">
       <button type="button" id="testAdvisor" class="linkbtn">Grant access &amp; test</button>
     </div>

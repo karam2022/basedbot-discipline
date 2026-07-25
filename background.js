@@ -18,14 +18,6 @@ const DEDUPE_TTL_MS = 24 * 3600 * 1000;
 let alertChain = Promise.resolve();
 let positionSyncChain = Promise.resolve();
 
-const RUBRIC = 'You assess risk from already-computed on-chain memecoin metrics. ' +
-  'This is a RISK ASSESSMENT, not financial advice. Do not recommend buying or selling, ' +
-  'never say "you should buy" or "you should sell", and do not emit an action field. ' +
-  'Synthesize the numbers and flag conflicts; do not recompute metrics or predict price. ' +
-  'Respond with ONLY a JSON object, no prose or code fence, with: risk ' +
-  '(low|medium|high|critical), headline (one sentence), supports (array), against ' +
-  '(array with at least one entry), watchFor (array), confidence (low|medium|high).';
-
 const advisorFailure = (value, apiKey, fallback = 'Advisor request failed') => {
   let reason = value && value.message ? value.message : value;
   reason = typeof reason === 'string' && reason.trim() ? reason.trim() : fallback;
@@ -54,7 +46,7 @@ const advisorVerdict = async (snapshot, requireEnabled = true, connectionOnly = 
       baseUrl: settings.advisorBaseUrl,
       model: settings.advisorModel,
       apiKey: settings.advisorApiKey,
-      system: RUBRIC,
+      system: BBD.provider.buildRubric(settings.advisorHorizonMin),
       user: JSON.stringify(snapshot),
       maxTokens: Number.isInteger(settings.advisorMaxTokens) && settings.advisorMaxTokens > 0
         ? settings.advisorMaxTokens : undefined,

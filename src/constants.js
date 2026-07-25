@@ -119,7 +119,11 @@ BBD.DEFAULT_SETTINGS = Object.freeze({
   // disable thinking entirely for a fast, direct answer where the provider
   // supports it.
   advisorMaxTokens: 4096,
-  advisorNoThinking: false
+  advisorNoThinking: false,
+  // The holding window the verdict is rated against. Without it a model rates
+  // memecoins on an investment horizon, where thin liquidity and holder
+  // concentration make every token "high" and the level stops discriminating.
+  advisorHorizonMin: 10
 });
 
 // chrome.storage.local keys.

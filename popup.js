@@ -67,6 +67,7 @@ const DEFAULTS = {
   advisorOnBanner: false,
   advisorMaxTokens: 4096,
   advisorNoThinking: false,
+  advisorHorizonMin: 10,
   memeBadges: ['Pons', 'bow.fun', 'Flap', 'Circus', 'Charms', 'Long.xyz', 'Bankr', 'Ape Store',
     'Zora', 'Clanker', 'Flaunch', 'Stroid', 'Klik', 'Trench', 'Livo',
     'Pump.fun', 'PumpFun', 'PumpSwap', 'Bags', 'Meteora DBC'],
@@ -461,6 +462,17 @@ const init = async () => {
     const v = Math.round(Number($('advisorMaxTokens').value));
     if (Number.isInteger(v) && v >= 256 && v <= 32000) saveSettings({ advisorMaxTokens: v });
     else $('advisorMaxTokens').value = String(settings.advisorMaxTokens || DEFAULTS.advisorMaxTokens);
+  });
+
+  $('advisorHorizonMin').value =
+    String(settings.advisorHorizonMin || DEFAULTS.advisorHorizonMin);
+  $('advisorHorizonMin').addEventListener('change', () => {
+    const v = Math.round(Number($('advisorHorizonMin').value));
+    if (Number.isInteger(v) && v >= 1 && v <= 240) saveSettings({ advisorHorizonMin: v });
+    else {
+      $('advisorHorizonMin').value =
+        String(settings.advisorHorizonMin || DEFAULTS.advisorHorizonMin);
+    }
   });
 
   providerSelect.addEventListener('change', async () => {

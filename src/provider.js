@@ -8,6 +8,9 @@ BBD.provider = (() => {
   const DEFAULT_MAX_TOKENS = 1200;
   const MAX_TEXT_LENGTH = 200;
   const MAX_LIST_LENGTH = 8;
+  const DEFAULT_HORIZON_MIN = 10;
+  const MIN_HORIZON_MIN = 1;
+  const MAX_HORIZON_MIN = 240;
 
   // Model defaults change independently of request shapes, so keep every
   // user-facing provider choice together at this single update point.
@@ -335,5 +338,42 @@ BBD.provider = (() => {
     return null;
   };
 
-  return { PRESETS, buildRequest, parseResponse, extractVerdict };
+  // Asked for "risk" with no horizon, a model falls back to its investment
+  // prior, where thin liquidity and holder concentration are disqualifying — so
+  // every token on a memecoin launchpad comes back high and the level stops
+  // discriminating. Naming the holding window and anchoring the scale to the
+  // typical token here is what makes the answer usable for a fast flip.
+  const buildRubric = (horizonMin) => {
+    const minutes = typeof horizonMin === 'number' && Number.isFinite(horizonMin) &&
+      horizonMin >= MIN_HORIZON_MIN && horizonMin <= MAX_HORIZON_MIN
+      ? Math.round(horizonMin) : DEFAULT_HORIZON_MIN;
+    return 'You assess risk from already-computed on-chain memecoin metrics for a ' +
+      'SHORT-TERM scalp trader. This is a RISK ASSESSMENT, not financial advice. Do not ' +
+      'recommend buying or selling, never say "you should buy" or "you should sell", and ' +
+      'do not emit an action field.\n\n' +
+      `HORIZON: the trader holds for roughly ${minutes} minutes, takes a small percentage ` +
+      'gain and exits. Rate ONLY the probability of an adverse event inside that window. ' +
+      'Long-horizon concerns are not the question and must never drive the level: ' +
+      'liquidity-to-market-cap ratio as a survival metric, top-10 or holder concentration ' +
+      'as a fundamentals problem, missing utility, roadmap or team, or the asset being a ' +
+      'memecoin at all. Liquidity matters only as exit slippage; concentration matters ' +
+      'only if those wallets are selling right now.\n\n' +
+      'SCALE: rate relative to the typical token on this launchpad, not to blue-chip ' +
+      'assets. Every token here is speculative and short-lived; that baseline is assumed ' +
+      'and is never a reason to raise the level. low = nothing specific working against a ' +
+      'fast exit. medium = the normal token here, ordinary volatility, no named danger. ' +
+      'high = one concrete, currently observable danger likely to matter inside the ' +
+      'window. critical = that danger is active right now, such as a sell tax or contract ' +
+      'state blocking the exit, liquidity pulled, the creator selling, or snipers dumping ' +
+      'into thin liquidity.\n\n' +
+      'CONSISTENCY: the level must follow your own supports and against lists. For high or ' +
+      'critical the headline must name the specific event you expect inside the window; if ' +
+      'you cannot name one, it is not high.\n\n' +
+      'Synthesize the numbers and flag conflicts; do not recompute metrics or predict ' +
+      'price. Respond with ONLY a JSON object, no prose or code fence, with: risk ' +
+      '(low|medium|high|critical), headline (one sentence), supports (array), against ' +
+      '(array with at least one entry), watchFor (array), confidence (low|medium|high).';
+  };
+
+  return { PRESETS, buildRequest, buildRubric, parseResponse, extractVerdict };
 })();

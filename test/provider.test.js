@@ -318,3 +318,41 @@ test('PRESETS expose the required providers and only known adapters', () => {
     assert.ok(['openai-compatible', 'anthropic'].includes(preset.adapter));
   }
 });
+
+test('buildRubric names the holding window it was given', () => {
+  assert.match(BBD.provider.buildRubric(3), /roughly 3 minutes/);
+  assert.match(BBD.provider.buildRubric(45), /roughly 45 minutes/);
+  assert.match(BBD.provider.buildRubric(7.4), /roughly 7 minutes/);
+});
+
+test('buildRubric falls back to the default window on unusable input', () => {
+  for (const bad of [undefined, null, 'ten', NaN, Infinity, 0, -5, 1e6]) {
+    assert.match(BBD.provider.buildRubric(bad), /roughly 10 minutes/);
+  }
+});
+
+test('buildRubric anchors the scale so a launchpad token is not high by default', () => {
+  const rubric = BBD.provider.buildRubric(10);
+  // The baseline must be stated as assumed, or every memecoin rates high.
+  assert.match(rubric, /baseline is assumed and is never a reason to raise the level/);
+  assert.match(rubric, /medium = the normal token here/);
+  // Long-horizon metrics must be named as out of scope, not left to the prior.
+  assert.match(rubric, /liquidity-to-market-cap ratio as a survival metric/);
+  assert.match(rubric, /top-10 or holder concentration/);
+  assert.match(rubric, /Liquidity matters only as exit slippage/);
+  // High must cost the model something concrete.
+  assert.match(rubric, /headline must name the specific event/);
+});
+
+test('buildRubric keeps the safety and output contract', () => {
+  const rubric = BBD.provider.buildRubric(10);
+  assert.match(rubric, /not financial advice/);
+  assert.match(rubric, /Do not recommend buying or selling/);
+  assert.match(rubric, /do not emit an action field/);
+  assert.match(rubric, /do not recompute metrics or predict price/);
+  // extractVerdict requires these fields, so the rubric must keep asking for them.
+  assert.match(rubric, /ONLY a JSON object/);
+  assert.match(rubric, /risk \(low\|medium\|high\|critical\)/);
+  assert.match(rubric, /against \(array with at least one entry\)/);
+  assert.match(rubric, /confidence \(low\|medium\|high\)/);
+});
