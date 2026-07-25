@@ -315,7 +315,9 @@ a[href*="/token/"]:hover .bbd-override,
   position: fixed;
   left: 16px;
   bottom: 104px;
-  z-index: 2147483000;
+  /* One above the readout pills: the verdict is interactive (it has a close
+     button), so it must win any overlap with the non-interactive panels. */
+  z-index: 2147483001;
   display: none;
   width: min(420px, calc(100vw - 32px));
   box-sizing: border-box;

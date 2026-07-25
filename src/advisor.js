@@ -82,26 +82,39 @@ BBD.advisor = (() => {
       .every((key) => typeof settings[key] === 'string' && settings[key].trim());
 
   const positionNearIntel = (el) => {
-    const intel = document.getElementById('bbd-intel');
-    const rect = intel && intel.getBoundingClientRect();
     const viewportWidth = typeof window.innerWidth === 'number' ? window.innerWidth : 0;
     const viewportHeight = typeof window.innerHeight === 'number' ? window.innerHeight : 0;
     const cardWidth = Math.min(420, Math.max(0, viewportWidth - 32));
-    if (rect && rect.width > 0 && viewportWidth - rect.right - 8 >= cardWidth) {
-      el.style.left = `${Math.round(rect.right + 8)}px`;
-      el.style.bottom = `${Math.max(16, Math.round(viewportHeight - rect.bottom))}px`;
-      return;
-    }
-    // Falling back into the same column means clearing everything already in
-    // it, not just the intel chip — the scalp and price nodes sit above it now.
-    el.style.left = '16px';
-    let highest = rect && rect.height > 0 ? rect.top : null;
-    for (const id of ['bbd-scalp', 'bbd-price']) {
+
+    // The card must clear the whole bottom-left column, not just the intel
+    // chip: the scalp panel is now the widest and tallest node in it, so
+    // anchoring to the chip alone left the card's left edge behind the panel.
+    const intel = document.getElementById('bbd-intel');
+    const intelRect = intel && intel.getBoundingClientRect();
+    let rightmost = 0;
+    let highest = null;
+    let intelBottom = null;
+    for (const id of ['bbd-intel', 'bbd-scalp', 'bbd-price']) {
       const node = document.getElementById(id);
       if (!node || node.style.display === 'none') continue;
       const box = node.getBoundingClientRect();
-      if (box.height > 0 && (highest === null || box.top < highest)) highest = box.top;
+      if (box.height <= 0) continue;
+      if (box.right > rightmost) rightmost = box.right;
+      if (highest === null || box.top < highest) highest = box.top;
+      if (id === 'bbd-intel') intelBottom = box.bottom;
     }
+
+    // Prefer the open space to the right of the column when it fits.
+    if (rightmost > 0 && viewportWidth - rightmost - 8 >= cardWidth) {
+      el.style.left = `${Math.round(rightmost + 8)}px`;
+      const bottomRef = intelBottom !== null ? intelBottom : viewportHeight - 16;
+      el.style.bottom = `${Math.max(16, Math.round(viewportHeight - bottomRef))}px`;
+      return;
+    }
+
+    // Otherwise stack it in the column, above everything already there.
+    el.style.left = '16px';
+    if (highest === null && intelRect && intelRect.height > 0) highest = intelRect.top;
     el.style.bottom = highest === null
       ? '104px'
       : `${Math.max(104, Math.round(viewportHeight - highest + 8))}px`;
