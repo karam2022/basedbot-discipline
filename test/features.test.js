@@ -387,3 +387,39 @@ test('garbage inputs and hostile getters never throw and return plain snapshots'
     assert.doesNotThrow(() => JSON.stringify(snapshot));
   }
 });
+
+test('cohort and holder aggregates pass through, rounded, addresses never', () => {
+  const out = BBD.features.build({
+    symbol: 'AI',
+    cohort: {
+      launchExitedPct: 93.4, launchMedianExitSec: 87.6, recentExitedPct: 95,
+      flipperPct: 44.2, oneTimeWalletPct: 42, walletCount: 181
+    },
+    holders: {
+      holderCount: 304, inProfitPct: 88.7, topClusterWallets: 16,
+      topClusterPct: 14.23, clusteredPct: 21.34, topHoldersTracked: 10,
+      topHoldersSelling: 5, topHoldersBuying: 1, topHoldersNetUsd: -5700.6
+    }
+  });
+  assert.deepEqual(out.cohort, {
+    launchExitedPct: 93, launchMedianExitSec: 88, recentExitedPct: 95,
+    flipperPct: 44, oneTimeWalletPct: 42, walletCount: 181
+  });
+  assert.deepEqual(out.holders, {
+    holderCount: 304, inProfitPct: 89, topClusterWallets: 16,
+    topClusterPct: 14.2, clusteredPct: 21.3, topHoldersTracked: 10,
+    topHoldersSelling: 5, topHoldersBuying: 1, topHoldersNetUsd: -5701
+  });
+});
+
+test('cohort and holder sections are omitted when absent or empty', () => {
+  const out = BBD.features.build({ symbol: 'AI' });
+  assert.equal(Object.hasOwn(out, 'cohort'), false);
+  assert.equal(Object.hasOwn(out, 'holders'), false);
+  // A section carrying only nulls collapses rather than emitting empty keys.
+  const nulls = BBD.features.build({
+    symbol: 'AI', cohort: { launchExitedPct: null }, holders: { inProfitPct: undefined }
+  });
+  assert.equal(Object.hasOwn(nulls, 'cohort'), false);
+  assert.equal(Object.hasOwn(nulls, 'holders'), false);
+});

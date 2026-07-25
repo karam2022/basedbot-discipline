@@ -85,6 +85,16 @@ BBD.riskFloor = (() => {
     const sniperUsd = setting(settings, 'advisorActiveSniperUsd', 500);
     if (sniperNet !== null && sniperNet <= -sniperUsd) return 'snipers are dumping';
 
+    // The real biggest holders selling now is a concrete exit event, not the
+    // standing concentration every token carries.
+    const holders = read(snapshot, 'holders');
+    const topSelling = finite(read(holders, 'topHoldersSelling'));
+    const topNet = finite(read(holders, 'topHoldersNetUsd'));
+    if ((topSelling !== null && topSelling >= 2) ||
+      (topNet !== null && topNet <= -sniperUsd)) {
+      return 'top holders are selling';
+    }
+
     const drop = finite(read(price, 'changePct5m'));
     const dropPct = setting(settings, 'exitAlarmDropPct', 8);
     if (drop !== null && drop <= -dropPct) return 'the price is already falling';

@@ -115,6 +115,8 @@ BBD.features = (() => {
       const priceInput = read(input, 'priceChanges');
       const positionInput = read(input, 'position');
       const rulesInput = read(input, 'rules');
+      const cohortInput = read(input, 'cohort');
+      const holdersInput = read(input, 'holders');
 
       const symbol = shortString(read(input, 'symbol'), 32) ||
         shortString(read(marketInput, 'symbol'), 32);
@@ -206,6 +208,37 @@ BBD.features = (() => {
       setNumber(position, 'peakPct', read(positionInput, 'peakPct'),
         (value) => rounded(value, 1));
       attach(snapshot, 'position', position);
+
+      // Wallet-behaviour aggregates, already sample-gated by the caller: only
+      // trustworthy numbers are passed, and these are counts and percentages,
+      // never an address. The model reasons over them; it never sees a wallet.
+      const cohort = {};
+      setNumber(cohort, 'launchExitedPct', read(cohortInput, 'launchExitedPct'), whole);
+      setNumber(cohort, 'launchMedianExitSec',
+        read(cohortInput, 'launchMedianExitSec'), whole);
+      setNumber(cohort, 'recentExitedPct', read(cohortInput, 'recentExitedPct'), whole);
+      setNumber(cohort, 'flipperPct', read(cohortInput, 'flipperPct'), whole);
+      setNumber(cohort, 'oneTimeWalletPct', read(cohortInput, 'oneTimeWalletPct'), whole);
+      setNumber(cohort, 'walletCount', read(cohortInput, 'walletCount'), count);
+      attach(snapshot, 'cohort', cohort);
+
+      const holders = {};
+      setNumber(holders, 'holderCount', read(holdersInput, 'holderCount'), count);
+      setNumber(holders, 'inProfitPct', read(holdersInput, 'inProfitPct'), whole);
+      setNumber(holders, 'topClusterWallets',
+        read(holdersInput, 'topClusterWallets'), count);
+      setNumber(holders, 'topClusterPct', read(holdersInput, 'topClusterPct'),
+        (value) => rounded(value, 1));
+      setNumber(holders, 'clusteredPct', read(holdersInput, 'clusteredPct'),
+        (value) => rounded(value, 1));
+      setNumber(holders, 'topHoldersTracked',
+        read(holdersInput, 'topHoldersTracked'), count);
+      setNumber(holders, 'topHoldersSelling',
+        read(holdersInput, 'topHoldersSelling'), count);
+      setNumber(holders, 'topHoldersBuying',
+        read(holdersInput, 'topHoldersBuying'), count);
+      setNumber(holders, 'topHoldersNetUsd', read(holdersInput, 'topHoldersNetUsd'), whole);
+      attach(snapshot, 'holders', holders);
 
       const rules = {};
       setNumber(rules, 'score', read(rulesInput, 'score'), whole);

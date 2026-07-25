@@ -368,3 +368,14 @@ test('buildRubric exempts exit evidence from the horizon rule', () => {
   assert.match(rubric, /ABSENT DATA IS NOT GOOD NEWS/);
   assert.match(rubric, /means unknown, never clean/);
 });
+
+test('buildRubric describes the wallet-behaviour fields so the model uses them', () => {
+  const rubric = BBD.provider.buildRubric(10);
+  assert.match(rubric, /WALLET BEHAVIOUR is measured, not guessed/);
+  assert.match(rubric, /topHoldersSelling/);
+  assert.match(rubric, /launchExitedPct/);
+  assert.match(rubric, /topClusterWallets/);
+  assert.match(rubric, /inProfitPct/);
+  // It must tell the model these outrank the static metrics for a short window.
+  assert.match(rubric, /weigh it above the static metrics/);
+});

@@ -320,6 +320,66 @@ BBD.advisor = (() => {
     }
   };
 
+  // The deterministic wallet readouts the panel already shows, folded into the
+  // snapshot so the model reasons from the same evidence the trader sees.
+  // Sample-gated here — only the numbers that cleared their own floor are
+  // passed — so the model is never handed a percentage over four wallets.
+  const crowdFeatures = (addr, settings) => {
+    const out = {};
+    try {
+      if (!BBD.cohort || !BBD.holders) return out;
+      const tape = BBD.feed.tapeFor(addr);
+      const born = BBD.cohort.launchAnalyze(BBD.feed.launchFor(addr), {
+        buyWindowMs: (settings.cohortEarlyWindowSec || 60) * 1000
+      });
+      const crowd = BBD.cohort.analyze(tape, {
+        minWallets: settings.cohortMinWallets,
+        earlyWindowMs: (settings.cohortEarlyWindowSec || 60) * 1000
+      });
+      const cohort = {};
+      if (born.enough) {
+        cohort.launchExitedPct = born.exitedPct;
+        cohort.launchMedianExitSec = born.medianExitSec;
+      }
+      if (crowd.enough) {
+        cohort.recentExitedPct = crowd.earlyExitedPct;
+        cohort.flipperPct = crowd.flipperPct;
+        cohort.oneTimeWalletPct = crowd.oneTimeWalletPct;
+        cohort.walletCount = crowd.walletCount;
+      }
+      if (Object.keys(cohort).length) out.cohort = cohort;
+
+      const rows = BBD.feed.holdersFor(addr);
+      const book = BBD.holders.analyze(rows, {
+        minHolders: settings.holderMinCount,
+        minClusterWallets: settings.holderClusterMinWallets
+      });
+      const track = BBD.holders.trackFlow(rows, tape, {
+        topN: settings.holderTrackTopN,
+        windowMs: (settings.holderTrackWindowSec || 300) * 1000,
+        now: Date.now()
+      });
+      const holders = {};
+      if (book.enough) {
+        holders.holderCount = book.holderCount;
+        holders.inProfitPct = book.inProfitPct;
+        holders.topClusterWallets = book.topClusterWallets;
+        holders.topClusterPct = book.topClusterPct;
+        holders.clusteredPct = book.clusteredPct;
+      }
+      if (track.enough) {
+        holders.topHoldersTracked = track.tracked;
+        holders.topHoldersSelling = track.sellers;
+        holders.topHoldersBuying = track.buyers;
+        holders.topHoldersNetUsd = track.netUsd;
+      }
+      if (Object.keys(holders).length) out.holders = holders;
+    } catch (err) {
+      // Enrichment is best-effort; its absence must not block a verdict.
+    }
+    return out;
+  };
+
   const assembleSnapshot = async (addr, settings) => {
     const route = routeInfo();
     const position = heldPosition(addr);
@@ -350,7 +410,8 @@ BBD.advisor = (() => {
         held: true,
         pnlPct: position.pct,
         peakPct: position.peakPct
-      } : undefined
+      } : undefined,
+      ...crowdFeatures(addr, settings)
     };
     const snapshot = BBD.features.build(input);
     // A verdict that contradicts the on-page chips is almost always a gap in

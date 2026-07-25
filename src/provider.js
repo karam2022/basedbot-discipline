@@ -375,6 +375,17 @@ BBD.provider = (() => {
       'ABSENT DATA IS NOT GOOD NEWS: a field missing from the snapshot means unknown, never ' +
       'clean. Never list a missing or unreported field as a point against the risk; put it ' +
       'in watchFor instead, and lower confidence.\n\n' +
+      'WALLET BEHAVIOUR is measured, not guessed, and is the strongest evidence you have for a ' +
+      'short window. When present, weigh it above the static metrics. holders.topHoldersSelling ' +
+      'is how many of the biggest holders are selling right now (with topHoldersNetUsd their net ' +
+      'flow) — the actual exit event. cohort.launchExitedPct is the share of first-minute buyers ' +
+      'already gone and cohort.flipperPct the share round-tripping fast; both high means the ' +
+      'early money is leaving and later buyers are the exit liquidity. holders.topClusterWallets ' +
+      'and topClusterPct are wallets sharing one funding source — hidden concentration that a ' +
+      'plain top-holder percentage misses. holders.inProfitPct is how many holders sit in profit ' +
+      'and can sell cheaply. These fields appear only when they cleared a sample floor, so when ' +
+      'they are present they are trustworthy; when absent, say so in watchFor rather than ' +
+      'assuming the crowd is healthy.\n\n' +
       'CONSISTENCY: the level must follow your own supports and against lists. For high or ' +
       'critical the headline must name the specific event you expect inside the window; if ' +
       'you cannot name one, it is not high.\n\n' +

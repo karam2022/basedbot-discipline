@@ -195,3 +195,18 @@ test('without tape data there is no cap, so a partial snapshot is not downgraded
   // An empty flow object is still evidence the tape was read.
   assert.equal(F().ceiling({ flow: {} }, settings).level, 'medium');
 });
+
+test('top holders selling lifts the cap so a real dump reads high', () => {
+  // The FORAI baseline is quiet; add the biggest holders actually selling.
+  const twoSelling = { ...forai, holders: { topHoldersSelling: 2, topHoldersNetUsd: -100 } };
+  assert.equal(F().ceiling(twoSelling, settings), null);
+  assert.equal(F().apply({ risk: 'high' }, twoSelling, settings).risk, 'high');
+
+  // One seller dumping past the threshold also counts.
+  const bigNet = { ...forai, holders: { topHoldersSelling: 1, topHoldersNetUsd: -900 } };
+  assert.equal(F().ceiling(bigNet, settings), null);
+
+  // A single small top-holder sell is not enough to lift the cap.
+  const tiny = { ...forai, holders: { topHoldersSelling: 1, topHoldersNetUsd: -50 } };
+  assert.equal(F().ceiling(tiny, settings).level, 'medium');
+});
