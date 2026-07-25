@@ -259,6 +259,102 @@ BBD.feed = (() => {
       tape.seen = new Set(rows.map((row) => row.txHash));
     }
     prune(tapes);
+    scheduleFlush();
+  };
+
+  // A reload used to throw the accumulated tape away, which is the one thing
+  // this buffer exists to prevent — six minutes of wallet history is worth more
+  // than the storage it costs. Rows persist as positional arrays because the
+  // field names would otherwise outweigh the data.
+  const TAPE_STORE_TOKENS = 6;   // recently seen tokens worth keeping
+  const TAPE_STORE_ROWS = 900;   // newest rows per token
+  const TAPE_FLUSH_MS = 15 * 1000;
+  let flushTimer = null;
+  let hydrating = null;
+
+  const packRow = (row) => [
+    row.ts, row.txHash, row.trader, row.isBuy ? 1 : 0,
+    row.volumeUsd, row.isPro ? 1 : 0, row.isSniper ? 1 : 0
+  ];
+
+  const unpackRow = (packed) => {
+    if (!Array.isArray(packed) || packed.length < 7) return null;
+    const ts = Number(packed[0]);
+    if (!Number.isFinite(ts) || typeof packed[1] !== 'string') return null;
+    return {
+      ts,
+      txHash: packed[1],
+      trader: typeof packed[2] === 'string' ? packed[2] : '',
+      isBuy: packed[3] === 1,
+      volumeUsd: usd(packed[4]) || 0,
+      isPro: packed[5] === 1,
+      isSniper: packed[6] === 1
+    };
+  };
+
+  const flushTapes = async () => {
+    flushTimer = null;
+    try {
+      const cutoff = Date.now() - TAPE_TTL_MS;
+      const recent = [...tapes.entries()]
+        .sort((a, b) => b[1].ts - a[1].ts)
+        .slice(0, TAPE_STORE_TOKENS);
+      const out = {};
+      for (const [key, tape] of recent) {
+        const rows = tape.rows
+          .filter((row) => row.ts >= cutoff)
+          .sort((a, b) => a.ts - b.ts)
+          .slice(-TAPE_STORE_ROWS)
+          .map(packRow);
+        if (rows.length) out[key] = { ts: tape.ts, rows };
+      }
+      await BBD.store.set(BBD.KEYS.tape, out);
+    } catch (err) {
+      // Losing history is a downgrade, never a reason to break the poll.
+    }
+  };
+
+  const scheduleFlush = () => {
+    if (flushTimer !== null) return;
+    try {
+      flushTimer = setTimeout(flushTapes, TAPE_FLUSH_MS);
+      // A pending write must never be the reason a host stays alive.
+      if (flushTimer && typeof flushTimer.unref === 'function') flushTimer.unref();
+    } catch (err) {
+      flushTimer = null;
+    }
+  };
+
+  // Idempotent and safe to call on every route change; stored rows are merged
+  // under the same tx_hash dedupe as live ones, so a double call cannot double
+  // count and a poll landing mid-hydrate cannot lose rows.
+  const hydrateTapes = () => {
+    if (hydrating) return hydrating;
+    hydrating = (async () => {
+      try {
+        const stored = await BBD.store.get(BBD.KEYS.tape, {});
+        if (!stored || typeof stored !== 'object') return;
+        const cutoff = Date.now() - TAPE_TTL_MS;
+        for (const [key, entry] of Object.entries(stored)) {
+          if (!entry || !Array.isArray(entry.rows)) continue;
+          let tape = tapes.get(key);
+          if (!tape) {
+            tape = { rows: [], seen: new Set(), ts: Number(entry.ts) || 0 };
+            tapes.set(key, tape);
+          }
+          for (const packed of entry.rows) {
+            const row = unpackRow(packed);
+            if (!row || row.ts < cutoff || tape.seen.has(row.txHash)) continue;
+            tape.seen.add(row.txHash);
+            tape.rows.push(row);
+          }
+        }
+        prune(tapes);
+      } catch (err) {
+        // An unreadable cache just means starting from an empty buffer.
+      }
+    })();
+    return hydrating;
   };
 
   // Returns rows oldest-first; callers reason about ordering, not arrival.
@@ -451,7 +547,7 @@ BBD.feed = (() => {
 
   return {
     statsFor, titlesFor, creatorFor, marketFor, auditFor, priceOf, ethPrice,
-    tickFor, adaptTick, notePrice, noteTrades, tapeFor,
+    tickFor, adaptTick, notePrice, noteTrades, tapeFor, hydrateTapes, flushTapes,
     heldPositions, hasBalances, hasFreshBalances, balancesUpdatedAt,
     poolFor
   };

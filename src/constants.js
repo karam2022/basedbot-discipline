@@ -153,6 +153,7 @@ BBD.KEYS = Object.freeze({
   journal: 'journal',     // { [tradeId]: { positionKey, addr, openTs, closeTs, ... } }
   daystats: 'daystats',   // { lossDismissedDay: 'YYYY-MM-DD' } — per-day guard dismissals
   guardDismissed: 'guardDismissed', // { [tradeId]: ts } — dismissed revenge advisories
+  tape: 'tape',           // { [addr]: { ts, rows: [[ts,tx,trader,buy,usd,pro,sniper]] } }
   positionsMeta: 'positionsMeta'     // { source, sourceTs, syncedTs } — data-health status
 });
 

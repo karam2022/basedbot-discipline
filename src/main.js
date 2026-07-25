@@ -29,6 +29,9 @@
   };
 
   const runForRoute = () => {
+    // Restore the accumulated trade tape before anything reads it, so a reload
+    // resumes the wallet history instead of restarting the sample count.
+    BBD.feed.hydrateTapes();
     BBD.filter.scan();
     BBD.pnl.scan();
     BBD.intel.scan();
@@ -112,7 +115,12 @@
   // Creator-reputation model lives in memory during a session; persist it on a
   // slow cadence and when the tab goes away so observations survive a reload.
   intervals.push(setInterval(guard(() => BBD.creator.flush()), 30 * 1000));
-  window.addEventListener('pagehide', () => BBD.creator.flush());
+  window.addEventListener('pagehide', () => {
+    BBD.creator.flush();
+    // The tape flush is throttled, so without this a reload loses whatever
+    // arrived since the last write — exactly the case this is meant to fix.
+    BBD.feed.flushTapes();
+  });
 
   // Watch held positions' trade feeds for dev/whale dumps (#8). Slower cadence
   // than the DOM polls — these are real network calls, one per held token.
