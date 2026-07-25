@@ -103,6 +103,7 @@ BBD.intel = (() => {
       el.id = 'bbd-intel';
       document.body.appendChild(el);
     }
+    if (BBD.drag) BBD.drag.register(el);
     const passed = checks.filter(([, v]) => v === true);
     const failed = checks.filter(([, v]) => v === false);
     // A flagged creator or a drainable contract forces the chip red even if the

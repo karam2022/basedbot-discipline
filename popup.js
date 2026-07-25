@@ -79,6 +79,7 @@ const DEFAULTS = {
   holderClusterMinWallets: 3,
   holderTrackTopN: 10,
   holderTrackWindowSec: 300,
+  panelsDraggable: true,
   memeBadges: ['Pons', 'bow.fun', 'Flap', 'Circus', 'Charms', 'Long.xyz', 'Bankr', 'Ape Store',
     'Zora', 'Clanker', 'Flaunch', 'Stroid', 'Klik', 'Trench', 'Livo',
     'Pump.fun', 'PumpFun', 'PumpSwap', 'Bags', 'Meteora DBC'],
@@ -115,6 +116,8 @@ const TOGGLES = {
       'Early-wallet exits, flip rate and one-trade wallets — needs minutes of open tape'],
     ['holderReadoutEnabled', 'Holder-list readout',
       'Funding clusters (real concentration) and share of holders in profit — aggregate only'],
+    ['panelsDraggable', 'Draggable panels',
+      'Drag the price, scalp, intel and KI cards anywhere; double-click one to reset. A moved panel stops passing clicks through'],
     ['creatorGuardEnabled', '⚠️ Flag risky creators', 'Marks tokens from serial launchers / past ruggers'],
     ['auditGuardEnabled', '⛔ Flag risky contracts', 'Marks tokens whose contract/hook can drain liquidity']
   ],

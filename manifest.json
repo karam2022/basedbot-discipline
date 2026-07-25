@@ -24,6 +24,7 @@
       "js": [
         "src/constants.js",
         "src/store.js",
+        "src/drag.js",
         "src/feed.js",
         "src/creator.js",
         "src/journal.js",

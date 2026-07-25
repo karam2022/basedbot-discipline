@@ -69,6 +69,8 @@ BBD.price = (() => {
     try {
       const el = document.getElementById('bbd-price');
       if (!el || el.style.display === 'none') return;
+      // A pill the trader has dragged owns its own place; stop repositioning it.
+      if (BBD.drag && BBD.drag.isCustom('bbd-price')) return;
       const scalp = document.getElementById('bbd-scalp');
       let bottom = SCALP_ANCHOR;
       if (scalp && scalp.style.display !== 'none' && scalp.offsetHeight > 0) {
@@ -164,6 +166,7 @@ BBD.price = (() => {
 
     el.replaceChildren(value);
     if (legs.length) el.appendChild(line);
+    if (BBD.drag) BBD.drag.register(el);
     el.style.display = 'block';
   };
 

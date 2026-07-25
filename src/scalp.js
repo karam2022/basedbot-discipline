@@ -174,6 +174,7 @@ BBD.scalp = (() => {
         el.id = 'bbd-scalp';
         document.body.appendChild(el);
       }
+      if (BBD.drag) BBD.drag.register(el);
 
       const exitLine = document.createElement('div');
       exitLine.className = `bbd-scalp-exit ${

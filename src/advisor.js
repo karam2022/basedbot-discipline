@@ -82,6 +82,8 @@ BBD.advisor = (() => {
       .every((key) => typeof settings[key] === 'string' && settings[key].trim());
 
   const positionNearIntel = (el) => {
+    // A card the trader has dragged owns its own place; leave it alone.
+    if (BBD.drag && BBD.drag.isCustom('bbd-advisor')) return;
     const viewportWidth = typeof window.innerWidth === 'number' ? window.innerWidth : 0;
     const viewportHeight = typeof window.innerHeight === 'number' ? window.innerHeight : 0;
     const cardWidth = Math.min(420, Math.max(0, viewportWidth - 32));
@@ -128,6 +130,7 @@ BBD.advisor = (() => {
       el.setAttribute('aria-live', 'polite');
       document.body.appendChild(el);
     }
+    if (BBD.drag) BBD.drag.register(el);
 
     let button = el.querySelector('#bbd-advisor-btn');
     if (!button) {

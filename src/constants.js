@@ -146,7 +146,10 @@ BBD.DEFAULT_SETTINGS = Object.freeze({
   // Follow the real top-N holders through the rolling tape: how many of the
   // biggest holders are actively selling, rather than a volume-share proxy.
   holderTrackTopN: 10,
-  holderTrackWindowSec: 300
+  holderTrackWindowSec: 300,
+  // Let the floating read-outs be dragged anywhere, position remembered. A
+  // moved panel stops passing clicks through to the page beneath it.
+  panelsDraggable: true
 });
 
 // chrome.storage.local keys.
@@ -165,6 +168,7 @@ BBD.KEYS = Object.freeze({
   guardDismissed: 'guardDismissed', // { [tradeId]: ts } — dismissed revenge advisories
   tape: 'tape',           // { [addr]: { ts, rows: [[ts,tx,trader,buy,usd,pro,sniper]] } }
   launch: 'launch',       // same shape — the oldest trades, fetched once, never stale
+  panelPos: 'panelPos',   // { [nodeId]: { left, top } } — user-dragged panel positions
   positionsMeta: 'positionsMeta'     // { source, sourceTs, syncedTs } — data-health status
 });
 

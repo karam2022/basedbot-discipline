@@ -32,6 +32,8 @@
     // Restore the accumulated trade tape before anything reads it, so a reload
     // resumes the wallet history instead of restarting the sample count.
     BBD.feed.hydrateTapes();
+    // Load any dragged panel positions before the nodes render into place.
+    if (BBD.drag) BBD.drag.hydrate();
     BBD.filter.scan();
     BBD.pnl.scan();
     BBD.intel.scan();
