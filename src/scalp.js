@@ -210,7 +210,48 @@ BBD.scalp = (() => {
         signalLine.appendChild(signal(`Liq ${compactUsd(summary.liqUsd)}`, 'bbd-scalp-mut'));
       }
 
-      el.replaceChildren(exitLine, signalLine);
+      // Wallet behaviour comes from the accumulated tape, so it stays blank
+      // until enough of it exists. A share over a handful of wallets would be
+      // noise, and a confident-looking percentage is worse than no line.
+      const cohortLine = document.createElement('div');
+      cohortLine.className = 'bbd-scalp-signals';
+      const crowd = BBD.cohort && settings && settings.cohortReadoutEnabled !== false
+        ? BBD.cohort.analyze(BBD.feed.tapeFor(addr), {
+          minWallets: settings.cohortMinWallets,
+          earlyWindowMs: settings.cohortEarlyWindowSec * 1000
+        })
+        : null;
+      if (crowd && crowd.enough) {
+        if (crowd.earlyExitedPct !== null) {
+          cohortLine.appendChild(signal(
+            `Early out ${crowd.earlyExitedPct}%`,
+            crowd.earlyExitedPct >= 60 ? 'bbd-scalp-bad' : 'bbd-scalp-good'
+          ));
+        }
+        if (crowd.flipperPct !== null && crowd.medianHoldSec !== null) {
+          cohortLine.appendChild(signal(
+            `Flips ${crowd.flipperPct}% ~${crowd.medianHoldSec}s`,
+            crowd.flipperPct >= 40 ? 'bbd-scalp-warn' : 'bbd-scalp-mut'
+          ));
+        }
+        if (crowd.oneTimeWalletPct !== null) {
+          cohortLine.appendChild(signal(
+            `1-trade ${crowd.oneTimeWalletPct}%`,
+            crowd.oneTimeWalletPct >= 70 ? 'bbd-scalp-warn' : 'bbd-scalp-mut'
+          ));
+        }
+        cohortLine.appendChild(signal(
+          `${crowd.walletCount}w/${crowd.observedMin}m`, 'bbd-scalp-mut'
+        ));
+      } else if (crowd) {
+        cohortLine.appendChild(signal(
+          `crowd: ${crowd.walletCount}w/${crowd.observedMin}m — too little tape`,
+          'bbd-scalp-mut'
+        ));
+      }
+
+      el.replaceChildren(exitLine, signalLine, ...(cohortLine.childNodes.length
+        ? [cohortLine] : []));
       el.style.display = 'block';
     } catch (err) {
       // A malformed tape row or disappearing extension API must not stop the

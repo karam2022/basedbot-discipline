@@ -130,7 +130,13 @@ BBD.DEFAULT_SETTINGS = Object.freeze({
   // Matches the intel chip's LP check, so the card and the chip cannot disagree.
   advisorFloorLpPct: 50,
   // Sniper outflow that counts as an event rather than a standing capability.
-  advisorActiveSniperUsd: 500
+  advisorActiveSniperUsd: 500,
+  // Wallet-behaviour readout. The tape it needs accumulates only while a token
+  // page is open, so it stays silent below the sample floor rather than showing
+  // a percentage computed over a handful of wallets.
+  cohortReadoutEnabled: true,
+  cohortMinWallets: 12,
+  cohortEarlyWindowSec: 60
 });
 
 // chrome.storage.local keys.

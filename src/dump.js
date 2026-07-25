@@ -104,6 +104,7 @@ BBD.dump = (() => {
         // This poll is the freshest price we get for held tokens (the live swap
         // socket is unreachable — see feed.notePrice) — feed the tick cache.
         BBD.feed.notePrice(addr, trades);
+        BBD.feed.noteTrades(addr, trades);
         // Dev/whale detection is gated by its own master switch, so the
         // AI exit-timing alarm can share this poll even when it's off.
         if (settings.dumpAlertsEnabled) {

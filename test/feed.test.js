@@ -322,3 +322,60 @@ test('cache getters normalize the address the way the writers do', () => {
   send('list', [{ address: solana, symbol: 'SOL', market_cap_usd: 7, liquidity_usd: 9 }]);
   assert.equal(F.marketFor(solana).liq, 9);
 });
+
+// The tape endpoint sends "YYYY-MM-DD HH:MM:SS" in UTC — not ISO 8601.
+const apiTime = (ms) => new Date(ms).toISOString().replace('T', ' ').slice(0, 19);
+
+test('the tape buffer accumulates across polls and dedupes by tx hash', () => {
+  const addr = '0xfeed000000000000000000000000000000000001';
+  const trade = (hash, secondsAgo, trader, isBuy) => ({
+    tx_hash: hash,
+    timestamp: apiTime(Date.now() - secondsAgo * 1000),
+    trader_full: trader,
+    is_buy: isBuy,
+    volume_usd: 50,
+    price_usd: 1
+  });
+
+  F.noteTrades(addr, [trade('a', 30, '0xaa', true), trade('b', 20, '0xbb', true)]);
+  assert.equal(F.tapeFor(addr).length, 2);
+
+  // The next poll overlaps the previous page; only the new row may be added.
+  F.noteTrades(addr, [trade('b', 20, '0xbb', true), trade('c', 10, '0xcc', false)]);
+  const rows = F.tapeFor(addr);
+  assert.equal(rows.length, 3);
+  assert.deepEqual(rows.map((r) => r.txHash), ['a', 'b', 'c']); // oldest first
+
+  // A checksummed caller reads the same buffer.
+  assert.equal(F.tapeFor(addr.toUpperCase().replace('0X', '0x')).length, 3);
+
+  // Rows without a hash or a parsable timestamp cannot be deduped or ordered.
+  F.noteTrades(addr, [
+    { timestamp: apiTime(Date.now()), trader_full: '0xdd', is_buy: true },
+    trade('e', 5, '0xee', true)
+  ]);
+  assert.deepEqual(F.tapeFor(addr).map((r) => r.txHash), ['a', 'b', 'c', 'e']);
+
+  // Unconfirmed rows are excluded, matching notePrice.
+  F.noteTrades(addr, [{ ...trade('f', 1, '0xff', true), preconfirm: true }]);
+  assert.equal(F.tapeFor(addr).length, 4);
+
+  assert.deepEqual(F.tapeFor('not-an-address'), []);
+  assert.deepEqual(F.tapeFor('0xfeed000000000000000000000000000000000009'), []);
+});
+
+test('the tape buffer drops rows older than its retention window', () => {
+  const addr = '0xfeed000000000000000000000000000000000002';
+  const old = {
+    tx_hash: 'stale',
+    timestamp: apiTime(Date.now() - 3 * 3600 * 1000),
+    trader_full: '0xaa', is_buy: true, volume_usd: 10, price_usd: 1
+  };
+  const fresh = {
+    tx_hash: 'fresh',
+    timestamp: apiTime(Date.now()),
+    trader_full: '0xbb', is_buy: true, volume_usd: 10, price_usd: 1
+  };
+  F.noteTrades(addr, [old, fresh]);
+  assert.deepEqual(F.tapeFor(addr).map((r) => r.txHash), ['fresh']);
+});

@@ -212,6 +212,66 @@ BBD.feed = (() => {
   // the tape for held positions anyway — feed the newest confirmed trade's
   // price_usd straight into the same cache the price consumers read. No market
   // cap on a trade row, so that stays null.
+  // One /trades page covers minutes, not a token's life, so any question about
+  // wallet behaviour over time needs history we keep ourselves. The polls that
+  // already run carry the rows; this stops throwing all but the newest away.
+  // There is no backfill: history starts when the tab does.
+  const TAPE_MAX_ROWS = 1500;
+  const TAPE_TTL_MS = 60 * 60 * 1000;
+  const tapes = new Map(); // addr -> { rows, seen: Set<txHash>, ts }
+
+  const noteTrades = (addr, trades) => {
+    if (!isAddr(addr) || !Array.isArray(trades)) return;
+    const key = normAddr(addr);
+    let tape = tapes.get(key);
+    if (!tape) {
+      tape = { rows: [], seen: new Set(), ts: 0 };
+      tapes.set(key, tape);
+    }
+    tape.ts = Date.now();
+
+    for (const t of trades) {
+      if (!t || typeof t !== 'object' || t.preconfirm === true) continue;
+      // tx_hash is the only stable identity across overlapping poll pages.
+      const txHash = typeof t.tx_hash === 'string' ? t.tx_hash : null;
+      if (!txHash || tape.seen.has(txHash)) continue;
+      const ts = BBD.parseTradeTimestamp(t.timestamp);
+      if (ts === null) continue;
+      tape.seen.add(txHash);
+      tape.rows.push({
+        ts,
+        txHash,
+        trader: typeof t.trader_full === 'string' ? t.trader_full : '',
+        isBuy: t.is_buy === true,
+        volumeUsd: usd(t.volume_usd) || 0,
+        isPro: t.is_pro_trader === true,
+        isSniper: t.is_sniper === true
+      });
+    }
+
+    const cutoff = tape.ts - TAPE_TTL_MS;
+    if (tape.rows.length > TAPE_MAX_ROWS ||
+      (tape.rows.length && tape.rows[0].ts < cutoff)) {
+      let rows = tape.rows.filter((row) => row.ts >= cutoff);
+      rows.sort((a, b) => a.ts - b.ts);
+      if (rows.length > TAPE_MAX_ROWS) rows = rows.slice(rows.length - TAPE_MAX_ROWS);
+      tape.rows = rows;
+      tape.seen = new Set(rows.map((row) => row.txHash));
+    }
+    prune(tapes);
+  };
+
+  // Returns rows oldest-first; callers reason about ordering, not arrival.
+  const tapeFor = (addr) => {
+    if (!addr) return [];
+    const tape = tapes.get(normAddr(addr));
+    if (!tape) return [];
+    const cutoff = Date.now() - TAPE_TTL_MS;
+    return tape.rows
+      .filter((row) => row.ts >= cutoff)
+      .sort((a, b) => a.ts - b.ts);
+  };
+
   const notePrice = (addr, trades) => {
     if (!isAddr(addr) || !Array.isArray(trades)) return;
     let bestTs = -Infinity;
@@ -391,7 +451,8 @@ BBD.feed = (() => {
 
   return {
     statsFor, titlesFor, creatorFor, marketFor, auditFor, priceOf, ethPrice,
-    tickFor, adaptTick, notePrice, heldPositions, hasBalances, hasFreshBalances, balancesUpdatedAt,
+    tickFor, adaptTick, notePrice, noteTrades, tapeFor,
+    heldPositions, hasBalances, hasFreshBalances, balancesUpdatedAt,
     poolFor
   };
 })();

@@ -37,6 +37,7 @@
         "src/candles.js",
         "src/features.js",
         "src/price.js",
+        "src/cohort.js",
         "src/scalp.js",
         "src/riskfloor.js",
         "src/advisor.js",

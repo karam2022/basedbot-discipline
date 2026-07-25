@@ -71,6 +71,9 @@ const DEFAULTS = {
   riskFloorEnabled: true,
   advisorFloorLpPct: 50,
   advisorActiveSniperUsd: 500,
+  cohortReadoutEnabled: true,
+  cohortMinWallets: 12,
+  cohortEarlyWindowSec: 60,
   memeBadges: ['Pons', 'bow.fun', 'Flap', 'Circus', 'Charms', 'Long.xyz', 'Bankr', 'Ape Store',
     'Zora', 'Clanker', 'Flaunch', 'Stroid', 'Klik', 'Trench', 'Livo',
     'Pump.fun', 'PumpFun', 'PumpSwap', 'Bags', 'Meteora DBC'],
@@ -103,6 +106,8 @@ const TOGGLES = {
       'Polls the trade tape every ~2.5s — no push socket needed'],
     ['scalpReadoutEnabled', 'Scalp readout on token page',
       'Live exit/flow signals for fast flips — no AI, no prediction'],
+    ['cohortReadoutEnabled', 'Wallet-behaviour readout',
+      'Early-wallet exits, flip rate and one-trade wallets — needs minutes of open tape'],
     ['creatorGuardEnabled', '⚠️ Flag risky creators', 'Marks tokens from serial launchers / past ruggers'],
     ['auditGuardEnabled', '⛔ Flag risky contracts', 'Marks tokens whose contract/hook can drain liquidity']
   ],

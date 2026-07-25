@@ -144,6 +144,9 @@ BBD.price = (() => {
       }
       const trades = (json && json.data) || [];
       BBD.feed.notePrice(addr, trades);
+      // Same rows, kept instead of discarded: wallet-level questions need more
+      // history than one page carries, and this poll is where it accumulates.
+      BBD.feed.noteTrades(addr, trades);
 
       if (settings.priceTickerEnabled) {
         const current = BBD.feed.tickFor(addr);
