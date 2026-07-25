@@ -9,6 +9,11 @@ BBD.advisor = (() => {
   const CANDLE_BUCKET_MS = 60 * 1000;
   const inFlight = new Map();
   const visibleBannerWins = new Set();
+  // Addresses whose verdict the trader dismissed with the × — kept so an
+  // automatic re-trigger (a dump or take-profit banner) cannot silently
+  // reopen a card the trader just closed. Cleared when they re-run it by hand
+  // or navigate away.
+  const dismissed = new Set();
 
   const record = (value) =>
     value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -141,7 +146,10 @@ BBD.advisor = (() => {
       button.title = 'AI risk read';
       button.addEventListener('click', () => {
         const route = routeInfo();
-        if (route) request(route.addr, { reason: 'button' });
+        if (!route) return;
+        // An explicit run is the trader asking for it, so undo any dismissal.
+        dismissed.delete(route.addr);
+        request(route.addr, { reason: 'button' });
       });
       el.prepend(button);
     }
@@ -203,14 +211,18 @@ BBD.advisor = (() => {
     const card = document.createElement('div');
     card.className = 'bbd-advisor-card';
 
-    // Dismiss clears only the verdict output; the 🤖 button stays so the read
-    // can be re-run. tick() never repopulates output, so this isn't undone.
+    // Dismiss clears the output and marks this address dismissed, so an
+    // automatic re-trigger cannot reopen it; the 🤖 button clears the mark and
+    // runs a fresh read on demand.
     const close = document.createElement('button');
     close.type = 'button';
     close.className = 'bbd-advisor-close';
     close.textContent = '×';
     close.title = 'Dismiss';
-    close.addEventListener('click', () => ui.output.replaceChildren());
+    close.addEventListener('click', () => {
+      dismissed.add(addr);
+      ui.output.replaceChildren();
+    });
     card.appendChild(close);
 
     const meta = document.createElement('div');
@@ -452,6 +464,9 @@ BBD.advisor = (() => {
   const runRequest = async (addr, options) => {
     const reason = options && options.reason;
     const automatic = reason === 'dump' || reason === 'banner';
+    // A dismissed card stays closed against dump/banner re-triggers; only an
+    // explicit button run (which clears the mark first) may reopen it.
+    if (automatic && dismissed.has(addr)) return null;
     const settings = options && options.settings
       ? options.settings
       : await BBD.store.settings();
@@ -603,6 +618,8 @@ BBD.advisor = (() => {
       ui.el.dataset.addr = route.addr;
       ui.output.replaceChildren();
       ui.button.disabled = false;
+      // A new token is a fresh start, not a dismissal carried over.
+      dismissed.delete(route.addr);
     }
     ui.el.style.display = 'block';
     positionNearIntel(ui.el);
