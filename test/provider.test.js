@@ -356,3 +356,15 @@ test('buildRubric keeps the safety and output contract', () => {
   assert.match(rubric, /against \(array with at least one entry\)/);
   assert.match(rubric, /confidence \(low\|medium\|high\)/);
 });
+
+test('buildRubric exempts exit evidence from the horizon rule', () => {
+  const rubric = BBD.provider.buildRubric(10);
+  // Without this the horizon instruction gives a model licence to file a
+  // contract danger flag under "long-horizon" and rate it away.
+  assert.match(rubric, /EXIT EVIDENCE OVERRIDES THE HORIZON RULE/);
+  assert.match(rubric, /audit\.danger or audit\.critical/);
+  assert.match(rubric, /the level is at least high/);
+  // Missing fields were being reported as reassurance.
+  assert.match(rubric, /ABSENT DATA IS NOT GOOD NEWS/);
+  assert.match(rubric, /means unknown, never clean/);
+});

@@ -366,6 +366,15 @@ BBD.provider = (() => {
       'window. critical = that danger is active right now, such as a sell tax or contract ' +
       'state blocking the exit, liquidity pulled, the creator selling, or snipers dumping ' +
       'into thin liquidity.\n\n' +
+      'EXIT EVIDENCE OVERRIDES THE HORIZON RULE: the audit block and the taxes describe ' +
+      'whether the position can be closed at all, so they are never long-horizon concerns ' +
+      'and the horizon rule above never applies to them. If audit.danger or audit.critical ' +
+      'is true, or a sell tax would eat the gain being targeted, the level is at least high ' +
+      'and the headline must state that finding. Treat every audit reason as an exit risk ' +
+      'unless you can say why it cannot bite inside the window.\n\n' +
+      'ABSENT DATA IS NOT GOOD NEWS: a field missing from the snapshot means unknown, never ' +
+      'clean. Never list a missing or unreported field as a point against the risk; put it ' +
+      'in watchFor instead, and lower confidence.\n\n' +
       'CONSISTENCY: the level must follow your own supports and against lists. For high or ' +
       'critical the headline must name the specific event you expect inside the window; if ' +
       'you cannot name one, it is not high.\n\n' +

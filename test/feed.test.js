@@ -297,3 +297,28 @@ test('balances defensively accept a usable candidate pool id', () => {
   assert.equal(F.poolFor(token).pool, pool);
   assert.equal(F.poolFor(token).chain, '4663');
 });
+
+test('cache getters normalize the address the way the writers do', () => {
+  const lower = '0xdddddddddddddddddddddddddddddddddddddddd';
+  const checksummed = '0xDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD';
+
+  send('audit', [{ address: lower,
+    data: { audit: { isTokenSafe: false, hookAudit: null } } }]);
+  // A caller holding the checksummed form must not read this as "not loaded".
+  assert.equal(F.auditFor(checksummed).danger, true);
+  assert.equal(F.auditFor(lower).danger, true);
+
+  send('list', [{ address: lower, symbol: 'DDD', market_cap_usd: 1000, liquidity_usd: 500 }]);
+  assert.equal(F.marketFor(checksummed).liq, 500);
+
+  send('metrics', { [checksummed]: {
+    creatorAddress: '0xEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE'
+  } });
+  // Writers normalize both the key and the creator value.
+  assert.equal(F.creatorFor(lower), '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee');
+
+  // Base58 addresses are case-sensitive and must survive untouched.
+  const solana = 'So11111111111111111111111111111111111111112';
+  send('list', [{ address: solana, symbol: 'SOL', market_cap_usd: 7, liquidity_usd: 9 }]);
+  assert.equal(F.marketFor(solana).liq, 9);
+});

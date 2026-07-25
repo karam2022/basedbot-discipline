@@ -314,7 +314,17 @@ BBD.advisor = (() => {
         peakPct: position.peakPct
       } : undefined
     };
-    return BBD.features.build(input);
+    const snapshot = BBD.features.build(input);
+    // A verdict that contradicts the on-page chips is almost always a gap in
+    // the snapshot rather than a bad read, and the two are indistinguishable
+    // from the outside. This is the scrubbed allow-list output — exactly the
+    // bytes that leave the browser — so logging it discloses nothing further.
+    try {
+      console.debug('[bbd] advisor snapshot', JSON.stringify(snapshot));
+    } catch (err) {
+      // Logging must never cost a verdict.
+    }
+    return snapshot;
   };
 
   const cachedVerdict = async (addr, featureBucket) => {

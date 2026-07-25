@@ -357,16 +357,20 @@ BBD.feed = (() => {
 
   const statsFor = (addr) => {
     if (!addr) return null;
-    const e = stats.get(addr);
+    const e = stats.get(normAddr(addr));
     return e && Date.now() - e.ts < STATS_TTL_MS ? e : null;
   };
+  // Every writer keys these maps through normAddr, so every reader must too:
+  // a caller holding a checksummed EVM address would otherwise miss a cached
+  // entry and read as "not loaded yet" — which the advisor and scalp readout
+  // cannot distinguish from "nothing to report".
   // Social links never really expire; ts is only used for pruning.
-  const titlesFor = (addr) => (addr && titles.get(addr)?.list) || [];
+  const titlesFor = (addr) => (addr && titles.get(normAddr(addr))?.list) || [];
   // Creator address and last-seen market for the creator guard. No TTL: these
   // are reference facts, and the guard's own history is what carries meaning.
-  const creatorFor = (addr) => (addr && creator.get(addr)) || null;
-  const marketFor = (addr) => (addr && market.get(addr)) || null;
-  const auditFor = (addr) => (addr && audit.get(addr)) || null;
+  const creatorFor = (addr) => (addr && creator.get(normAddr(addr))) || null;
+  const marketFor = (addr) => (addr && market.get(normAddr(addr))) || null;
+  const auditFor = (addr) => (addr && audit.get(normAddr(addr))) || null;
   const priceOf = (sym) => (sym && prices[sym]) || null;
   const ethPrice = () => prices.ETH || null;
   const tickFor = (addr) => {
