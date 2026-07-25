@@ -92,10 +92,19 @@ BBD.advisor = (() => {
       el.style.bottom = `${Math.max(16, Math.round(viewportHeight - rect.bottom))}px`;
       return;
     }
+    // Falling back into the same column means clearing everything already in
+    // it, not just the intel chip — the scalp and price nodes sit above it now.
     el.style.left = '16px';
-    el.style.bottom = rect && rect.height > 0
-      ? `${Math.max(104, Math.round(viewportHeight - rect.top + 8))}px`
-      : '104px';
+    let highest = rect && rect.height > 0 ? rect.top : null;
+    for (const id of ['bbd-scalp', 'bbd-price']) {
+      const node = document.getElementById(id);
+      if (!node || node.style.display === 'none') continue;
+      const box = node.getBoundingClientRect();
+      if (box.height > 0 && (highest === null || box.top < highest)) highest = box.top;
+    }
+    el.style.bottom = highest === null
+      ? '104px'
+      : `${Math.max(104, Math.round(viewportHeight - highest + 8))}px`;
   };
 
   const ensureEl = () => {
