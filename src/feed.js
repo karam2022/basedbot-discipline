@@ -272,6 +272,50 @@ BBD.feed = (() => {
   let flushTimer = null;
   let hydrating = null;
 
+  // The oldest 500 trades (sort=asc) are the token's launch window and never
+  // change, so they are fetched once, kept apart from the rolling buffer, and
+  // cached across reloads. This is the only view that can answer what the
+  // first wallets did, which is the measurement the launch research is about.
+  const LAUNCH_STORE_TOKENS = 12;
+  const launch = new Map(); // addr -> { rows, ts }
+
+  const noteLaunch = (addr, trades) => {
+    if (!isAddr(addr) || !Array.isArray(trades)) return;
+    const rows = [];
+    const seen = new Set();
+    for (const t of trades) {
+      if (!t || typeof t !== 'object' || t.preconfirm === true) continue;
+      const txHash = typeof t.tx_hash === 'string' ? t.tx_hash : null;
+      const ts = BBD.parseTradeTimestamp(t.timestamp);
+      if (!txHash || ts === null || seen.has(txHash)) continue;
+      seen.add(txHash);
+      rows.push({
+        ts,
+        txHash,
+        trader: typeof t.trader_full === 'string' ? t.trader_full : '',
+        isBuy: t.is_buy === true,
+        volumeUsd: usd(t.volume_usd) || 0,
+        isPro: t.is_pro_trader === true,
+        isSniper: t.is_sniper === true
+      });
+    }
+    if (!rows.length) return;
+    rows.sort((a, b) => a.ts - b.ts);
+    launch.set(normAddr(addr), { rows, ts: Date.now() });
+    prune(launch);
+    scheduleFlush();
+  };
+
+  const launchFor = (addr) => {
+    if (!addr) return [];
+    const entry = launch.get(normAddr(addr));
+    return entry ? entry.rows : [];
+  };
+
+  // Distinguishes "no launch data" from "fetched and empty", so the caller
+  // knows whether retrying is worth a request.
+  const hasLaunch = (addr) => !!(addr && launch.has(normAddr(addr)));
+
   const packRow = (row) => [
     row.ts, row.txHash, row.trader, row.isBuy ? 1 : 0,
     row.volumeUsd, row.isPro ? 1 : 0, row.isSniper ? 1 : 0
@@ -292,23 +336,37 @@ BBD.feed = (() => {
     };
   };
 
+  const packMap = (map, { tokens, rows: maxRows, cutoff }) => {
+    const out = {};
+    const recent = [...map.entries()]
+      .sort((a, b) => b[1].ts - a[1].ts)
+      .slice(0, tokens);
+    for (const [key, entry] of recent) {
+      const rows = entry.rows
+        .filter((row) => cutoff === null || row.ts >= cutoff)
+        .sort((a, b) => a.ts - b.ts)
+        .slice(-maxRows)
+        .map(packRow);
+      if (rows.length) out[key] = { ts: entry.ts, rows };
+    }
+    return out;
+  };
+
   const flushTapes = async () => {
     flushTimer = null;
     try {
-      const cutoff = Date.now() - TAPE_TTL_MS;
-      const recent = [...tapes.entries()]
-        .sort((a, b) => b[1].ts - a[1].ts)
-        .slice(0, TAPE_STORE_TOKENS);
-      const out = {};
-      for (const [key, tape] of recent) {
-        const rows = tape.rows
-          .filter((row) => row.ts >= cutoff)
-          .sort((a, b) => a.ts - b.ts)
-          .slice(-TAPE_STORE_ROWS)
-          .map(packRow);
-        if (rows.length) out[key] = { ts: tape.ts, rows };
-      }
-      await BBD.store.set(BBD.KEYS.tape, out);
+      await BBD.store.set(BBD.KEYS.tape, packMap(tapes, {
+        tokens: TAPE_STORE_TOKENS,
+        rows: TAPE_STORE_ROWS,
+        cutoff: Date.now() - TAPE_TTL_MS
+      }));
+      // Launch rows have no TTL: a token's first minutes stay true forever,
+      // and refetching them costs a request that returns identical bytes.
+      await BBD.store.set(BBD.KEYS.launch, packMap(launch, {
+        tokens: LAUNCH_STORE_TOKENS,
+        rows: TAPE_MAX_ROWS,
+        cutoff: null
+      }));
     } catch (err) {
       // Losing history is a downgrade, never a reason to break the poll.
     }
@@ -350,6 +408,19 @@ BBD.feed = (() => {
           }
         }
         prune(tapes);
+
+        const storedLaunch = await BBD.store.get(BBD.KEYS.launch, {});
+        if (storedLaunch && typeof storedLaunch === 'object') {
+          for (const [key, entry] of Object.entries(storedLaunch)) {
+            if (!entry || !Array.isArray(entry.rows) || launch.has(key)) continue;
+            const rows = entry.rows.map(unpackRow).filter(Boolean);
+            if (rows.length) {
+              rows.sort((a, b) => a.ts - b.ts);
+              launch.set(key, { rows, ts: Number(entry.ts) || 0 });
+            }
+          }
+          prune(launch);
+        }
       } catch (err) {
         // An unreadable cache just means starting from an empty buffer.
       }
@@ -548,6 +619,7 @@ BBD.feed = (() => {
   return {
     statsFor, titlesFor, creatorFor, marketFor, auditFor, priceOf, ethPrice,
     tickFor, adaptTick, notePrice, noteTrades, tapeFor, hydrateTapes, flushTapes,
+    noteLaunch, launchFor, hasLaunch,
     heldPositions, hasBalances, hasFreshBalances, balancesUpdatedAt,
     poolFor
   };

@@ -151,5 +151,86 @@ BBD.cohort = (() => {
     }
   };
 
-  return { DEFAULTS, analyze };
+  const LAUNCH_DEFAULTS = Object.freeze({
+    buyWindowMs: 60 * 1000,
+    measureMs: 5 * 60 * 1000,
+    minWallets: 8
+  });
+
+  const launchOption = (options, key) => {
+    try {
+      const raw = options && typeof options === 'object' ? options[key] : undefined;
+      return positive(raw) === null ? LAUNCH_DEFAULTS[key] : raw;
+    } catch (err) {
+      return LAUNCH_DEFAULTS[key];
+    }
+  };
+
+  // Unlike analyze(), this reads the token's oldest page, where buy and sell
+  // both sit inside the same window — so "bought in the first minute, gone by
+  // the fifth" is measured rather than inferred across a gap. That is the exact
+  // shape the launch research reports, which is why it gets its own function
+  // instead of a parameter on the rolling one.
+  const launchAnalyze = (rows, options) => {
+    const result = {
+      enough: false,
+      cohortWallets: 0,
+      exitedPct: null,
+      medianExitSec: null,
+      spanMin: 0
+    };
+    try {
+      if (!Array.isArray(rows) || !rows.length) return result;
+      const buyWindowMs = launchOption(options, 'buyWindowMs');
+      const measureMs = launchOption(options, 'measureMs');
+      const minWallets = launchOption(options, 'minWallets');
+
+      let firstTs = Infinity;
+      let lastTs = -Infinity;
+      for (const r of rows) {
+        const ts = finite(r && r.ts);
+        if (ts === null) continue;
+        if (ts < firstTs) firstTs = ts;
+        if (ts > lastTs) lastTs = ts;
+      }
+      if (firstTs === Infinity) return result;
+      result.spanMin = Math.round(((lastTs - firstTs) / 60000) * 10) / 10;
+
+      const buyDeadline = firstTs + buyWindowMs;
+      const exitDeadline = firstTs + measureMs;
+      const cohort = new Map(); // wallet -> first buy ts
+
+      for (const r of rows) {
+        if (!r || r.isBuy !== true) continue;
+        const ts = finite(r.ts);
+        const key = walletKey(r.trader);
+        if (ts === null || !key || ts > buyDeadline) continue;
+        if (!cohort.has(key) || ts < cohort.get(key)) cohort.set(key, ts);
+      }
+      result.cohortWallets = cohort.size;
+      if (!cohort.size) return result;
+
+      const exitTimes = [];
+      const exited = new Set();
+      for (const r of rows) {
+        if (!r || r.isBuy !== false) continue;
+        const ts = finite(r.ts);
+        const key = walletKey(r.trader);
+        if (ts === null || !key || ts > exitDeadline) continue;
+        const boughtAt = cohort.get(key);
+        if (boughtAt === undefined || ts < boughtAt || exited.has(key)) continue;
+        exited.add(key);
+        exitTimes.push(Math.round((ts - boughtAt) / 1000));
+      }
+
+      result.exitedPct = share(exited.size, cohort.size);
+      result.medianExitSec = median(exitTimes);
+      result.enough = cohort.size >= minWallets;
+      return result;
+    } catch (err) {
+      return result;
+    }
+  };
+
+  return { DEFAULTS, LAUNCH_DEFAULTS, analyze, launchAnalyze };
 })();

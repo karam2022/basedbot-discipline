@@ -221,10 +221,26 @@ BBD.scalp = (() => {
           earlyWindowMs: settings.cohortEarlyWindowSec * 1000
         })
         : null;
+      // The launch cohort comes from the token's own first minutes, so it is
+      // the one number here that means what it says regardless of when the
+      // page was opened. It leads for that reason.
+      const born = BBD.cohort && settings && settings.cohortReadoutEnabled !== false
+        ? BBD.cohort.launchAnalyze(BBD.feed.launchFor(addr), {
+          buyWindowMs: settings.cohortEarlyWindowSec * 1000
+        })
+        : null;
+      if (born && born.enough && born.exitedPct !== null) {
+        const held = born.medianExitSec !== null ? ` ~${born.medianExitSec}s` : '';
+        cohortLine.appendChild(signal(
+          `Launch out ${born.exitedPct}%${held}`,
+          born.exitedPct >= 60 ? 'bbd-scalp-bad' : 'bbd-scalp-good'
+        ));
+      }
+
       if (crowd && crowd.enough) {
         if (crowd.earlyExitedPct !== null) {
           cohortLine.appendChild(signal(
-            `Early out ${crowd.earlyExitedPct}%`,
+            `Recent out ${crowd.earlyExitedPct}%`,
             crowd.earlyExitedPct >= 60 ? 'bbd-scalp-bad' : 'bbd-scalp-good'
           ));
         }
@@ -240,12 +256,15 @@ BBD.scalp = (() => {
             crowd.oneTimeWalletPct >= 70 ? 'bbd-scalp-warn' : 'bbd-scalp-mut'
           ));
         }
+        // "Recent" is measured from the oldest row held, which is not the
+        // token's start unless the launch page happens to reach it. Saying
+        // "last Nm" keeps that distinction visible next to "Launch".
         cohortLine.appendChild(signal(
-          `${crowd.walletCount}w/${crowd.observedMin}m`, 'bbd-scalp-mut'
+          `${crowd.walletCount}w/last ${crowd.observedMin}m`, 'bbd-scalp-mut'
         ));
       } else if (crowd) {
         cohortLine.appendChild(signal(
-          `crowd: ${crowd.walletCount}w/${crowd.observedMin}m — too little tape`,
+          `crowd: ${crowd.walletCount}w/last ${crowd.observedMin}m — too little tape`,
           'bbd-scalp-mut'
         ));
       }

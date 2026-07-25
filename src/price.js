@@ -3,6 +3,31 @@
 'use strict';
 
 BBD.price = (() => {
+  const TAPE_LIMIT = 500; // the endpoint's cap; larger values return 500 anyway
+  const launchTried = new Set(); // addr -> attempted this session, success or not
+
+  // sort=asc returns the token's earliest trades. Only lowercase works — ASC
+  // and friends fall through to desc, which would silently cache the newest
+  // page as if it were the launch.
+  const fetchLaunch = async (addr, baseParams) => {
+    try {
+      const key = addr.startsWith('0x') ? addr.toLowerCase() : addr;
+      if (launchTried.has(key) || BBD.feed.hasLaunch(addr)) return;
+      launchTried.add(key);
+      const params = new URLSearchParams(baseParams);
+      params.set('sort', 'asc');
+      params.set('limit', String(TAPE_LIMIT));
+      const res = await fetch(`/api/token/${addr}/trades?${params}`, {
+        credentials: 'same-origin'
+      });
+      if (!res.ok) return;
+      const json = await res.json();
+      BBD.feed.noteLaunch(addr, (json && json.data) || []);
+    } catch (err) {
+      // One missing launch page costs a signal, never the price poll.
+    }
+  };
+
   const hide = () => {
     const el = document.getElementById('bbd-price');
     if (el) el.style.display = 'none';
@@ -125,6 +150,14 @@ BBD.price = (() => {
       const chain = pool.chain || (route && route[1]);
       if (chain) params.set('chain', chain);
       params.set('pool', pool.pool);
+      // The page asks for 100 rows, which on a busy token is about two minutes.
+      // 500 is the server's cap and stretches the same single request to
+      // roughly twelve, which is what the wallet readout needs to say anything.
+      params.set('limit', String(TAPE_LIMIT));
+
+      // The oldest page never changes, so it is fetched once per token and
+      // then served from cache — including across reloads.
+      fetchLaunch(addr, params);
 
       let response;
       try {

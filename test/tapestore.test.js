@@ -144,3 +144,41 @@ test('only the most recent tokens are persisted', async () => {
   // Six is the documented cap; the buffer keeps more in memory than on disk.
   assert.equal(Object.keys(disk.tape).length, 6);
 });
+
+test('the launch page is cached separately and survives a reload', async () => {
+  disk = {};
+  const before = freshFeed();
+  assert.equal(before.hasLaunch(ADDR), false);
+  before.noteLaunch(ADDR, [trade('L1', 300, '0xaa', true), trade('L2', 290, '0xbb', true)]);
+  assert.equal(before.hasLaunch(ADDR), true);
+  assert.equal(before.launchFor(ADDR).length, 2);
+  // The rolling buffer must not be polluted by the launch fetch.
+  assert.equal(before.tapeFor(ADDR).length, 0);
+  await before.flushTapes();
+
+  const after = freshFeed();
+  assert.equal(after.hasLaunch(ADDR), false);
+  await after.hydrateTapes();
+  assert.equal(after.hasLaunch(ADDR), true);
+  assert.deepEqual(after.launchFor(ADDR).map((r) => r.txHash), ['L1', 'L2']);
+});
+
+test('launch rows ignore the tape retention window', async () => {
+  disk = {};
+  const before = freshFeed();
+  before.noteLaunch(ADDR, [trade('old', 30, '0xaa', true)]);
+  await before.flushTapes();
+  // A token launched days ago still has a valid, unchanging launch page.
+  disk.launch[ADDR].rows[0][0] = Date.now() - 72 * 3600 * 1000;
+
+  const after = freshFeed();
+  await after.hydrateTapes();
+  assert.equal(after.launchFor(ADDR).length, 1);
+});
+
+test('launch rows arrive oldest-first regardless of fetch order', async () => {
+  disk = {};
+  const feed = freshFeed();
+  feed.noteLaunch(ADDR, [trade('newer', 10, '0xbb', false), trade('older', 300, '0xaa', true)]);
+  assert.deepEqual(feed.launchFor(ADDR).map((r) => r.txHash), ['older', 'newer']);
+});

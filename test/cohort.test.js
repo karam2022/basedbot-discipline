@@ -145,3 +145,63 @@ test('garbage never throws and returns a well-formed empty result', () => {
   ]);
   assert.equal(partial.walletCount, 1);
 });
+
+// The launch page (sort=asc) holds buy AND sell inside one window, so the
+// research measurement — bought in minute one, gone by minute five — is
+// countable rather than inferred across a gap.
+const launchTape = ({ buyers = 20, exiting = 15, buyAtSec = 10, sellAtSec = 120 }) => {
+  const rows = [];
+  for (let i = 0; i < buyers; i++) rows.push(row(buyAtSec, wallet(i), true));
+  for (let i = 0; i < exiting; i++) rows.push(row(sellAtSec, wallet(i), false));
+  return rows;
+};
+
+test('launch cohort counts first-minute buyers that sold by the fifth', () => {
+  const out = C().launchAnalyze(launchTape({ buyers: 20, exiting: 15 }));
+  assert.equal(out.enough, true);
+  assert.equal(out.cohortWallets, 20);
+  assert.equal(out.exitedPct, 75);
+  assert.ok(out.medianExitSec >= 105 && out.medianExitSec <= 115, out.medianExitSec);
+});
+
+test('buys after the first minute are outside the launch cohort', () => {
+  const rows = launchTape({ buyers: 20, exiting: 0 });
+  for (let i = 100; i < 120; i++) rows.push(row(200, wallet(i), true));
+  const out = C().launchAnalyze(rows);
+  assert.equal(out.cohortWallets, 20);
+});
+
+test('a sell after the measurement deadline does not count as an exit', () => {
+  const late = C().launchAnalyze(launchTape({ sellAtSec: 400 }));
+  assert.equal(late.exitedPct, 0);
+  const inTime = C().launchAnalyze(launchTape({ sellAtSec: 280 }));
+  assert.equal(inTime.exitedPct, 75);
+});
+
+test('a sell before a wallet ever bought is not that wallet exiting', () => {
+  const rows = [row(5, wallet(1), false), ...launchTape({ buyers: 20, exiting: 0 })];
+  const out = C().launchAnalyze(rows);
+  assert.equal(out.exitedPct, 0);
+});
+
+test('a wallet selling twice is one exit, not two', () => {
+  const rows = launchTape({ buyers: 20, exiting: 10 });
+  for (let i = 0; i < 10; i++) rows.push(row(150, wallet(i), false));
+  const out = C().launchAnalyze(rows);
+  assert.equal(out.exitedPct, 50);
+});
+
+test('a launch cohort below its own floor reports not enough', () => {
+  const out = C().launchAnalyze(launchTape({ buyers: 4, exiting: 4 }));
+  assert.equal(out.cohortWallets, 4);
+  assert.equal(out.enough, false);
+  assert.equal(C().LAUNCH_DEFAULTS.minWallets, 8);
+});
+
+test('launch analysis never throws on garbage', () => {
+  for (const bad of [null, undefined, 'x', 7, [], [null, {}, { ts: 'no' }]]) {
+    const out = C().launchAnalyze(bad);
+    assert.equal(out.enough, false);
+    assert.equal(out.exitedPct, null);
+  }
+});
