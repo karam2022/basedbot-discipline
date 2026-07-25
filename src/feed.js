@@ -324,6 +324,11 @@ BBD.feed = (() => {
     for (const h of rows) {
       if (!h || typeof h !== 'object') continue;
       lean.push({
+        // The holder's own address, kept so the rolling tape can be matched
+        // against the real top holders instead of a volume-share proxy. Local
+        // only, like the funding source; the aggregate is all that surfaces.
+        address: typeof h.address === 'string' ? h.address : undefined,
+        rank: typeof h.rank === 'number' ? h.rank : undefined,
         percentage: h.percentage,
         total_pnl_usd: h.total_pnl_usd,
         funding_source_address_full: typeof h.funding_source_address_full === 'string'

@@ -77,6 +77,8 @@ const DEFAULTS = {
   holderReadoutEnabled: true,
   holderMinCount: 20,
   holderClusterMinWallets: 3,
+  holderTrackTopN: 10,
+  holderTrackWindowSec: 300,
   memeBadges: ['Pons', 'bow.fun', 'Flap', 'Circus', 'Charms', 'Long.xyz', 'Bankr', 'Ape Store',
     'Zora', 'Clanker', 'Flaunch', 'Stroid', 'Klik', 'Trench', 'Livo',
     'Pump.fun', 'PumpFun', 'PumpSwap', 'Bags', 'Meteora DBC'],

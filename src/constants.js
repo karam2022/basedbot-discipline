@@ -142,7 +142,11 @@ BBD.DEFAULT_SETTINGS = Object.freeze({
   // on its own cadence; aggregate-only, no address ever leaves the browser.
   holderReadoutEnabled: true,
   holderMinCount: 20,
-  holderClusterMinWallets: 3
+  holderClusterMinWallets: 3,
+  // Follow the real top-N holders through the rolling tape: how many of the
+  // biggest holders are actively selling, rather than a volume-share proxy.
+  holderTrackTopN: 10,
+  holderTrackWindowSec: 300
 });
 
 // chrome.storage.local keys.

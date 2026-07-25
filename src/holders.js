@@ -121,5 +121,89 @@ BBD.holders = (() => {
     }
   };
 
-  return { DEFAULTS, analyze };
+  const TRACK_DEFAULTS = Object.freeze({
+    topN: 10,
+    windowMs: 5 * 60 * 1000
+  });
+
+  const trackOption = (options, key) => {
+    try {
+      const raw = options && typeof options === 'object' ? options[key] : undefined;
+      const n = finite(raw);
+      return n !== null && n > 0 ? n : TRACK_DEFAULTS[key];
+    } catch (err) {
+      return TRACK_DEFAULTS[key];
+    }
+  };
+
+  const walletKey = (value) => {
+    if (typeof value !== 'string' || !value) return null;
+    return value.startsWith('0x') ? value.toLowerCase() : value;
+  };
+
+  // The tape proxy (top-3 volume share) answers "is volume concentrated"; this
+  // answers "are the actual biggest holders selling right now", by matching the
+  // rolling tape against the real top-N holder addresses. Addresses are read to
+  // match and discarded; only the counts and net flow come back.
+  const trackFlow = (holderRows, tapeRows, options) => {
+    const result = {
+      enough: false,
+      tracked: 0,
+      sellers: 0,
+      buyers: 0,
+      soldUsd: 0,
+      boughtUsd: 0,
+      netUsd: 0
+    };
+    try {
+      if (!Array.isArray(holderRows) || !holderRows.length ||
+        !Array.isArray(tapeRows) || !tapeRows.length) return result;
+      const topN = Math.round(trackOption(options, 'topN'));
+      const windowMs = trackOption(options, 'windowMs');
+      const now = finite(options && options.now);
+      const end = now !== null ? now : Date.now();
+
+      const ranked = holderRows
+        .map((h, i) => ({ key: walletKey(h && h.address), rank: finite(h && h.rank), i }))
+        .filter((h) => h.key);
+      ranked.sort((a, b) => {
+        const ra = a.rank !== null ? a.rank : Infinity;
+        const rb = b.rank !== null ? b.rank : Infinity;
+        return ra !== rb ? ra - rb : a.i - b.i;
+      });
+      const top = new Set(ranked.slice(0, topN).map((h) => h.key));
+      if (!top.size) return result;
+      result.tracked = top.size;
+
+      const start = end - windowMs;
+      const sold = new Set();
+      const bought = new Set();
+      for (const row of tapeRows) {
+        if (!row) continue;
+        const ts = finite(row.ts);
+        if (ts === null || ts < start) continue;
+        const key = walletKey(row.trader);
+        if (!key || !top.has(key)) continue;
+        const usd = finite(row.volumeUsd) || 0;
+        if (row.isBuy === true) {
+          bought.add(key);
+          result.boughtUsd += usd;
+        } else {
+          sold.add(key);
+          result.soldUsd += usd;
+        }
+      }
+      result.sellers = sold.size;
+      result.buyers = bought.size;
+      result.soldUsd = Math.round(result.soldUsd);
+      result.boughtUsd = Math.round(result.boughtUsd);
+      result.netUsd = result.boughtUsd - result.soldUsd;
+      result.enough = true;
+      return result;
+    } catch (err) {
+      return result;
+    }
+  };
+
+  return { DEFAULTS, TRACK_DEFAULTS, analyze, trackFlow };
 })();

@@ -386,16 +386,18 @@ test('the holder list caches lean rows and reports its age', () => {
   assert.deepEqual(F.holdersFor(addr), []);
 
   F.noteHolders(addr, [
-    { percentage: 1.5, total_pnl_usd: 200, funding_source_address_full: '0xAAA',
-      entity_logo: 'https://x/y.png', platform_name: 'noise' },
-    { percentage: 0.5, total_pnl_usd: -10 }
+    { address: '0xtop1', rank: 1, percentage: 1.5, total_pnl_usd: 200,
+      funding_source_address_full: '0xAAA', entity_logo: 'https://x/y.png', platform_name: 'noise' },
+    { address: '0xtop2', rank: 2, percentage: 0.5, total_pnl_usd: -10 }
   ]);
   const rows = F.holdersFor(addr);
   assert.equal(rows.length, 2);
-  // Only the four aggregate fields are retained; the logo/platform noise is not.
+  // Only the aggregate fields are retained; the logo/platform noise is not.
   assert.deepEqual(Object.keys(rows[0]).sort(),
-    ['funding_source_address', 'funding_source_address_full', 'percentage', 'total_pnl_usd']);
+    ['address', 'funding_source_address', 'funding_source_address_full',
+      'percentage', 'rank', 'total_pnl_usd']);
   assert.equal(rows[0].percentage, 1.5);
+  assert.equal(rows[0].address, '0xtop1');
   assert.equal(rows[0].funding_source_address_full, '0xAAA');
   assert.ok(F.holdersAgeMs(addr) < 1000);
 

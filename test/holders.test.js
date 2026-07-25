@@ -130,3 +130,71 @@ test('garbage never throws and returns a well-formed empty result', () => {
   }
   assert.equal(H().DEFAULTS.minClusterWallets, 3);
 });
+
+// Feature 3: match the real top-N holder addresses against the rolling tape.
+const T0 = 1_700_000_000_000;
+const holderAddr = (n) => `0xh${String(n).padStart(39, '0')}`;
+const holderList = (n) => Array.from({ length: n }, (_, i) =>
+  ({ address: holderAddr(i), rank: i + 1, percentage: 1, total_pnl_usd: 10 }));
+const tapeRow = (trader, isBuy, secondsAgo, usd) =>
+  ({ ts: T0 - secondsAgo * 1000, trader, isBuy, volumeUsd: usd });
+
+test('trackFlow counts top holders selling in the window', () => {
+  const out = H().trackFlow(holderList(10), [
+    tapeRow(holderAddr(0), false, 30, 500),
+    tapeRow(holderAddr(2), false, 60, 300),
+    tapeRow('0xoutsider', false, 10, 9999) // not a top holder — ignored
+  ], { topN: 10, now: T0 });
+  assert.equal(out.enough, true);
+  assert.equal(out.tracked, 10);
+  assert.equal(out.sellers, 2);
+  assert.equal(out.soldUsd, 800);
+  assert.equal(out.netUsd, -800);
+});
+
+test('trackFlow respects the topN cutoff by rank', () => {
+  // Rank 11 sells but only the top 10 are tracked.
+  const list = holderList(15);
+  const out = H().trackFlow(list, [tapeRow(holderAddr(10), false, 10, 400)],
+    { topN: 10, now: T0 });
+  assert.equal(out.tracked, 10);
+  assert.equal(out.sellers, 0);
+});
+
+test('trackFlow separates buyers from sellers and dedupes a wallet', () => {
+  const out = H().trackFlow(holderList(10), [
+    tapeRow(holderAddr(0), true, 40, 200),
+    tapeRow(holderAddr(0), false, 20, 50), // same holder, both sides
+    tapeRow(holderAddr(1), true, 10, 100)
+  ], { topN: 10, now: T0 });
+  assert.equal(out.buyers, 2);
+  assert.equal(out.sellers, 1);
+  assert.equal(out.netUsd, 250); // 300 bought - 50 sold
+});
+
+test('trackFlow ignores trades outside the window', () => {
+  const out = H().trackFlow(holderList(10), [
+    tapeRow(holderAddr(0), false, 10, 500),   // inside 5m
+    tapeRow(holderAddr(1), false, 600, 900)   // 10m ago, outside
+  ], { topN: 10, windowMs: 5 * 60 * 1000, now: T0 });
+  assert.equal(out.sellers, 1);
+  assert.equal(out.soldUsd, 500);
+});
+
+test('trackFlow matches top-holder addresses case-insensitively', () => {
+  const list = [{ address: '0xABCDEF0000000000000000000000000000000009', rank: 1, percentage: 1 }];
+  const out = H().trackFlow(list, [
+    tapeRow('0xabcdef0000000000000000000000000000000009', false, 10, 700)
+  ], { topN: 10, now: T0 });
+  assert.equal(out.sellers, 1);
+  assert.equal(out.soldUsd, 700);
+});
+
+test('trackFlow returns not-enough without holders or tape', () => {
+  assert.equal(H().trackFlow([], [tapeRow(holderAddr(0), false, 1, 1)], {}).enough, false);
+  assert.equal(H().trackFlow(holderList(10), [], {}).enough, false);
+  for (const bad of [null, undefined, 'x', 7]) {
+    assert.equal(H().trackFlow(bad, bad, {}).enough, false);
+  }
+  assert.equal(H().TRACK_DEFAULTS.topN, 10);
+});

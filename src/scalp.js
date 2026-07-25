@@ -296,6 +296,27 @@ BBD.scalp = (() => {
             book.inProfitPct >= 70 ? 'bbd-scalp-warn' : 'bbd-scalp-mut'
           ));
         }
+
+        // The real top holders matched against the rolling tape: a big holder
+        // actively selling is the concrete exit event, not the volume-share
+        // proxy. Shown only when one of them is actually moving.
+        const track = BBD.holders.trackFlow(
+          BBD.feed.holdersFor(addr), BBD.feed.tapeFor(addr), {
+            topN: settings.holderTrackTopN,
+            windowMs: (settings.holderTrackWindowSec || 300) * 1000,
+            now: Date.now()
+          }
+        );
+        if (track.enough && track.sellers > 0) {
+          holdersLine.appendChild(signal(
+            `Top${track.tracked}: ${track.sellers} sold ${compactUsd(track.soldUsd)}`,
+            'bbd-scalp-bad'
+          ));
+        } else if (track.enough && track.buyers > 0) {
+          holdersLine.appendChild(signal(
+            `Top${track.tracked}: ${track.buyers} buying`, 'bbd-scalp-good'
+          ));
+        }
       }
 
       el.replaceChildren(exitLine, signalLine,
