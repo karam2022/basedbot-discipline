@@ -42,11 +42,25 @@ const makeEl = (id, { w = 100, h = 40, rect = { left: 0, top: 0 } } = {}) => ({
   title: '',
   listeners: {},
   addEventListener(type, fn) { this.listeners[type] = fn; },
-  getBoundingClientRect() { return { left: rect.left, top: rect.top, ...rect }; }
+  getBoundingClientRect() {
+    // Mirror the real DOM: once left/top are set inline, the box reflects them.
+    const left = this.style.left ? parseInt(this.style.left, 10) : rect.left;
+    const top = this.style.top ? parseInt(this.style.top, 10) : rect.top;
+    return { ...rect, left, top };
+  }
 });
 
 global.window = { innerWidth: 1000, innerHeight: 800 };
-global.document = { addEventListener() {}, removeEventListener() {} };
+// A document that records handlers so a drag gesture can be driven end to end.
+const docHandlers = { pointermove: [], pointerup: [], click: [] };
+global.document = {
+  addEventListener(type, fn) { (docHandlers[type] || (docHandlers[type] = [])).push(fn); },
+  removeEventListener(type, fn) {
+    const list = docHandlers[type];
+    if (list) docHandlers[type] = list.filter((f) => f !== fn);
+  }
+};
+const fire = (type, event) => (docHandlers[type] || []).slice().forEach((fn) => fn(event));
 
 const freshDrag = () => {
   delete BBD.drag;
@@ -133,4 +147,47 @@ test('reset clears the stored position and its inline styles', async () => {
   assert.equal(el.style.top, '');
   // The store no longer holds the reset node.
   assert.equal(disk.panelPos['bbd-advisor'], undefined);
+});
+
+test('a real drag stores the new position and swallows the release click', async () => {
+  disk = {};
+  settings = { panelsDraggable: true };
+  const drag = freshDrag();
+  await drag.hydrate();
+
+  // A card whose grab landed on its button — the KI-check case.
+  const el = makeEl('bbd-advisor', { rect: { left: 10, top: 10 } });
+  drag.register(el);
+  assert.equal(drag.isCustom('bbd-advisor'), false);
+
+  el.listeners.pointerdown({ button: 0, clientX: 100, clientY: 100 });
+  // A move past the threshold turns the press into a drag.
+  fire('pointermove', { clientX: 160, clientY: 140, preventDefault() {} });
+  assert.equal(el.style.left, '70px');  // 10 + (160-100)
+  assert.equal(el.style.top, '50px');   // 10 + (140-100)
+
+  let clickReached = false;
+  fire('pointerup', {});
+  // The drag registered a capturing click swallow; the button's click is eaten.
+  fire('click', { stopPropagation() {}, preventDefault() { clickReached = true; } });
+  assert.equal(clickReached, true, 'the release click was cancelled');
+  assert.equal(drag.isCustom('bbd-advisor'), true);
+  assert.deepEqual(disk.panelPos['bbd-advisor'], { left: 70, top: 50 });
+});
+
+test('a press without movement is a click, not a drag', async () => {
+  disk = {};
+  const drag = freshDrag();
+  await drag.hydrate();
+  const el = makeEl('bbd-price', { rect: { left: 10, top: 10 } });
+  drag.register(el);
+
+  el.listeners.pointerdown({ button: 0, clientX: 100, clientY: 100 });
+  fire('pointermove', { clientX: 101, clientY: 101, preventDefault() {} }); // under threshold
+  fire('pointerup', {});
+  // Nothing moved and nothing was stored, so the click passes through normally.
+  assert.equal(drag.isCustom('bbd-price'), false);
+  let swallowed = false;
+  fire('click', { stopPropagation() {}, preventDefault() { swallowed = true; } });
+  assert.equal(swallowed, false);
 });

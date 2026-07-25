@@ -82,11 +82,32 @@ BBD.drag = (() => {
     }
   };
 
+  // A press below the move threshold is a click and is left to whatever control
+  // it landed on (the KI-Check button, the close ×, an expandable section); a
+  // press that actually moves becomes a drag, and the click it would otherwise
+  // fire on release is swallowed so dragging by the button never also triggers
+  // it. This is what lets the whole card, buttons included, be a drag handle.
+  const swallowNextClick = () => {
+    try {
+      const swallow = (event) => {
+        event.stopPropagation();
+        event.preventDefault();
+        cleanup();
+      };
+      const cleanup = () => {
+        document.removeEventListener('click', swallow, true);
+        clearTimeout(timer);
+      };
+      const timer = setTimeout(cleanup, 300);
+      document.addEventListener('click', swallow, true);
+    } catch (err) {
+      // Worst case a drag-release also clicks; harmless for these controls.
+    }
+  };
+
   const onPointerDown = (el, event) => {
     try {
       if (event.button !== 0) return;
-      const target = event.target;
-      if (target && target.closest && target.closest(INTERACTIVE)) return;
       const startX = event.clientX;
       const startY = event.clientY;
       const rect = el.getBoundingClientRect();
@@ -112,6 +133,7 @@ BBD.drag = (() => {
         const r = el.getBoundingClientRect();
         positions[el.id] = { left: Math.round(r.left), top: Math.round(r.top) };
         persist();
+        swallowNextClick();
       };
       document.addEventListener('pointermove', move);
       document.addEventListener('pointerup', up);
