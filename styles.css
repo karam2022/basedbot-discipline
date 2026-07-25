@@ -222,10 +222,12 @@ a[href*="/token/"]:hover .bbd-override,
 
 /* The whole read-out lives in one bottom-left column: the right edge belongs to
    BasedBot's buy/sell panel, and covering the trade controls is worse than any
-   placement gain. Order from the floor up: intel chip, scalp, price. */
+   placement gain. Order from the floor up: intel chip, scalp, price. The pill's
+   bottom is a first-paint fallback only — price.js repositions it above the
+   scalp panel's real height each tick, since that panel's height varies. */
 #bbd-price {
   position: fixed;
-  bottom: 178px;
+  bottom: 250px;
   left: 16px;
   z-index: 2147483000;
   display: none;

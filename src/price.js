@@ -59,6 +59,29 @@ BBD.price = (() => {
     if (el) el.style.display = 'none';
   };
 
+  // The scalp panel grows and shrinks with how much it has to say, so a fixed
+  // offset for the pill above it eventually collides — which is exactly what a
+  // full readout did. Sit the pill on the panel's real height instead, falling
+  // back to the panel's own anchor when it is hidden.
+  const SCALP_ANCHOR = 104;
+  const GAP = 8;
+  const positionPrice = () => {
+    try {
+      const el = document.getElementById('bbd-price');
+      if (!el || el.style.display === 'none') return;
+      const scalp = document.getElementById('bbd-scalp');
+      let bottom = SCALP_ANCHOR;
+      if (scalp && scalp.style.display !== 'none' && scalp.offsetHeight > 0) {
+        const anchor = parseInt(getComputedStyle(scalp).bottom, 10);
+        bottom = (Number.isFinite(anchor) ? anchor : SCALP_ANCHOR) +
+          scalp.offsetHeight + GAP;
+      }
+      el.style.bottom = `${bottom}px`;
+    } catch (err) {
+      // Layout math must never break the poll; the CSS fallback still applies.
+    }
+  };
+
   const trimDecimalZeros = (value) =>
     value.includes('.') ? value.replace(/\.?0+$/, '') : value;
 
@@ -231,6 +254,10 @@ BBD.price = (() => {
       } else if (BBD.scalp) {
         BBD.scalp.hide();
       }
+
+      // After the panel has rendered its final height for this tick, lift the
+      // price pill clear of it so the two never overlap.
+      if (settings.priceTickerEnabled) positionPrice();
     } catch (err) {
       // Storage and extension APIs disappear under post-reload orphans; the
       // next healthy script instance owns the badge and polling lifecycle.
