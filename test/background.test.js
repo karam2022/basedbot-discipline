@@ -13,6 +13,8 @@ const load = (rel) => {
 
 load('src/constants.js');
 load('src/provider.js');
+// The worker gets this through importScripts, which the harness stubs out.
+load('src/riskfloor.js');
 global.importScripts = () => undefined;
 
 const state = {
@@ -315,4 +317,53 @@ test('a real verdict request surfaces a key-redacted snippet when unparseable', 
   assert.match(response.reason, /could not parse a verdict/);
   assert.match(response.reason, /No JSON here/);
   assert.equal(JSON.stringify(response).includes(apiKey), false);
+});
+
+test('the risk floor is applied to the verdict the worker hands back', async () => {
+  const apiKey = 'sk-test-advisor-floor';
+  state.settings = {
+    ...state.settings,
+    advisorEnabled: true,
+    advisorProvider: 'openai',
+    advisorBaseUrl: 'https://provider.test/v1',
+    advisorModel: 'synthetic-model',
+    advisorApiKey: apiKey
+  };
+  const reply = (risk) => async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({
+      choices: [{ message: { content: JSON.stringify({
+        risk,
+        headline: 'No observable danger to a fast exit.',
+        supports: [],
+        against: ['Zero taxes and healthy buy pressure.'],
+        watchFor: [],
+        confidence: 'medium'
+      }) } }]
+    })
+  });
+
+  // The reported case: the page flags the contract, the model still says low.
+  fetchImpl = reply('low');
+  const raised = await send({
+    type: 'bbd-advisor-verdict',
+    snapshot: { symbol: 'TEST', audit: { danger: true }, safety: { taxSell: 0 } }
+  });
+  assert.equal(raised.verdict.risk, 'high');
+  assert.equal(raised.verdict.raisedFrom, 'low');
+  assert.match(raised.verdict.raisedReason, /contract flagged unsafe/);
+
+  // A clean snapshot must pass through untouched, or the floor is just noise.
+  fetchImpl = reply('low');
+  const clean = await send({
+    type: 'bbd-advisor-verdict',
+    snapshot: {
+      symbol: 'TEST',
+      audit: { danger: false, critical: false },
+      safety: { taxSell: 0, lpBurned: 100, lpLocked: 0 }
+    }
+  });
+  assert.equal(clean.verdict.risk, 'low');
+  assert.equal(clean.verdict.raisedReason, undefined);
 });

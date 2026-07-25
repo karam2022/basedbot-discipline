@@ -146,6 +146,10 @@ BBD.features = (() => {
         preferredBoolean(intel, 'dexPaid', stats, 'paid'));
       setNumber(safety, 'lpBurned', read(intel, 'lpBurned'),
         (value) => rounded(value, 1));
+      // Burned and locked are alternatives, so sending only one made a fully
+      // locked pool look unprotected to both the model and the risk floor.
+      setNumber(safety, 'lpLocked', read(intel, 'lpLocked'),
+        (value) => rounded(value, 1));
       setBoolean(safety, 'renounced', read(intel, 'renounced'));
       // The current panel parser calls these buyTax/sellTax; accepting both
       // spellings keeps this boundary compatible without exposing either raw object.

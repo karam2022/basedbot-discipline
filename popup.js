@@ -68,6 +68,8 @@ const DEFAULTS = {
   advisorMaxTokens: 4096,
   advisorNoThinking: false,
   advisorHorizonMin: 10,
+  riskFloorEnabled: true,
+  advisorFloorLpPct: 50,
   memeBadges: ['Pons', 'bow.fun', 'Flap', 'Circus', 'Charms', 'Long.xyz', 'Bankr', 'Ape Store',
     'Zora', 'Clanker', 'Flaunch', 'Stroid', 'Klik', 'Trench', 'Livo',
     'Pump.fun', 'PumpFun', 'PumpSwap', 'Bags', 'Meteora DBC'],
@@ -127,7 +129,8 @@ const TOGGLES = {
     ['advisorEnabled', 'Enable AI advisor', 'Opt-in; requests bill to your provider account'],
     ['advisorOnDump', 'Run on dump alerts'],
     ['advisorOnBanner', 'Run on take-profit banners'],
-    ['advisorNoThinking', 'Disable provider thinking', 'Faster + more reliable on GLM/Qwen reasoning models']
+    ['advisorNoThinking', 'Disable provider thinking', 'Faster + more reliable on GLM/Qwen reasoning models'],
+    ['riskFloorEnabled', 'Enforce a risk floor', 'Unsafe contract, blocking sell tax or unprotected LP raise the level regardless of the model']
   ]
 };
 

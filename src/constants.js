@@ -123,7 +123,12 @@ BBD.DEFAULT_SETTINGS = Object.freeze({
   // The holding window the verdict is rated against. Without it a model rates
   // memecoins on an investment horizon, where thin liquidity and holder
   // concentration make every token "high" and the level stops discriminating.
-  advisorHorizonMin: 10
+  advisorHorizonMin: 10,
+  // Facts that decide whether a position can be closed set a minimum risk level
+  // in code, because prose the model can reinterpret has twice failed to hold.
+  riskFloorEnabled: true,
+  // Matches the intel chip's LP check, so the card and the chip cannot disagree.
+  advisorFloorLpPct: 50
 });
 
 // chrome.storage.local keys.

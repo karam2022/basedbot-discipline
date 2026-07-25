@@ -38,6 +38,7 @@
         "src/features.js",
         "src/price.js",
         "src/scalp.js",
+        "src/riskfloor.js",
         "src/advisor.js",
         "src/exitalarm.js",
         "src/main.js"

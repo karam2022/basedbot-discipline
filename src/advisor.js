@@ -200,6 +200,17 @@ BBD.advisor = (() => {
     }`;
     meta.append(chip, confidence);
 
+    // A level the model did not choose must say so, or the card reads as the
+    // model contradicting the reasons printed directly beneath it.
+    let raised = null;
+    if (typeof verdict.raisedReason === 'string' && verdict.raisedReason) {
+      raised = document.createElement('div');
+      raised.className = 'bbd-advisor-raised';
+      raised.textContent = `Raised from ${
+        typeof verdict.raisedFrom === 'string' ? verdict.raisedFrom : 'the model read'
+      } by the extension: ${verdict.raisedReason}.`;
+    }
+
     const headline = document.createElement('div');
     headline.className = 'bbd-advisor-headline';
     headline.textContent = typeof verdict.headline === 'string' ? verdict.headline : '';
@@ -221,7 +232,7 @@ BBD.advisor = (() => {
     against.appendChild(againstTitle);
     appendList(against, verdict.against);
 
-    card.append(meta, headline, supports, against);
+    card.append(meta, ...(raised ? [raised] : []), headline, supports, against);
 
     if (Array.isArray(verdict.watchFor) && verdict.watchFor.length) {
       const watch = document.createElement('details');

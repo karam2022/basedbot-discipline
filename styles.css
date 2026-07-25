@@ -405,6 +405,13 @@ a[href*="/token/"]:hover .bbd-override,
   color: #94a3b8;
   font-size: 11px;
 }
+#bbd-advisor .bbd-advisor-raised {
+  margin: 2px 0 4px;
+  border-left: 2px solid #f59e0b;
+  padding-left: 6px;
+  color: #fbbf24;
+  font-size: 11px;
+}
 #bbd-advisor .bbd-advisor-headline {
   overflow: hidden;
   color: #f8fafc;

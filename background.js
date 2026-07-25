@@ -3,7 +3,7 @@
 'use strict';
 
 if (typeof importScripts === 'function') {
-  importScripts('src/constants.js', 'src/provider.js');
+  importScripts('src/constants.js', 'src/provider.js', 'src/riskfloor.js');
 }
 
 const ID_PREFIX = 'bbd|';
@@ -93,7 +93,14 @@ const advisorVerdict = async (snapshot, requireEnabled = true, connectionOnly = 
       'could not parse a verdict from the model reply'
     );
   }
-  return { ok: true, verdict };
+  // The floor is applied here rather than at render time so every consumer —
+  // the card, the journal, the exit alarm, the calibration report — reads the
+  // same level the user was shown.
+  return {
+    ok: true,
+    verdict: BBD.riskFloor
+      ? BBD.riskFloor.apply(verdict, snapshot, settings) : verdict
+  };
 };
 
 const testAdvisor = async () => {

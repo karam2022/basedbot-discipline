@@ -103,6 +103,7 @@ test('build produces the complete compact snapshot from realistic inputs', () =>
       proTraders: 61,
       dexPaid: true,
       lpBurned: 100,
+      lpLocked: 0,
       renounced: true,
       taxBuy: 0,
       taxSell: 2
