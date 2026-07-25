@@ -61,31 +61,99 @@ BBD.riskFloor = (() => {
     }
   };
 
-  // Returns the verdict unchanged unless a floor outranks it. The original
-  // level is kept so the card can show that the extension, not the model,
-  // raised it — an unexplained bump would read as the model contradicting
-  // its own reasons.
+  // Nearly every token on this launchpad has unburned LP, unrenounced
+  // ownership and concentrated holders. Those are constants of the population,
+  // not signals, and a level driven by them cannot discriminate between two
+  // tokens — which is the whole job. So capability alone caps at medium, and
+  // only an event actually visible in the data buys high or critical.
+  const activeHazard = (snapshot, settings) => {
+    const audit = read(snapshot, 'audit');
+    const safety = read(snapshot, 'safety');
+    const flow = read(snapshot, 'flow');
+    const price = read(snapshot, 'price');
+
+    if (read(audit, 'danger') === true || read(audit, 'critical') === true) {
+      return 'the audit flags the contract';
+    }
+    const sellTax = finite(read(safety, 'taxSell'));
+    if (sellTax !== null && sellTax > setting(settings, 'scalpMaxSellTaxPct', 10)) {
+      return 'the sell tax blocks the exit';
+    }
+    if (read(flow, 'devSold') === true) return 'the creator is selling';
+
+    const sniperNet = finite(read(flow, 'sniperNetUsd'));
+    const sniperUsd = setting(settings, 'advisorActiveSniperUsd', 500);
+    if (sniperNet !== null && sniperNet <= -sniperUsd) return 'snipers are dumping';
+
+    const drop = finite(read(price, 'changePct5m'));
+    const dropPct = setting(settings, 'exitAlarmDropPct', 8);
+    if (drop !== null && drop <= -dropPct) return 'the price is already falling';
+
+    return null;
+  };
+
+  const ceiling = (snapshot, settings) => {
+    try {
+      if (snapshot === null || typeof snapshot !== 'object') return null;
+      // "Nothing is happening" is a claim about the tape, so it needs the tape.
+      // Capping a snapshot whose flow and price never loaded would silently
+      // downgrade a verdict on the strength of data we simply do not have.
+      const seen = read(snapshot, 'flow') !== undefined ||
+        read(snapshot, 'price') !== undefined;
+      if (!seen) return null;
+      if (activeHazard(snapshot, settings)) return null;
+      return {
+        level: 'medium',
+        reason: 'no hazard is actually happening yet; unprotected LP and ' +
+          'concentration are the baseline for every token here'
+      };
+    } catch (err) {
+      return null;
+    }
+  };
+
+  // Clamps the model between both bounds. The original level travels with the
+  // verdict so the card can name the extension as the source — an unexplained
+  // change would read as the model contradicting the reasons printed beneath.
+  // The floor is applied last: a hazard it recognises is always an active
+  // hazard too, so the two bounds can never fight over the same verdict.
   const apply = (verdict, snapshot, settings) => {
     try {
       if (verdict === null || typeof verdict !== 'object') return verdict;
       if (read(settings, 'riskFloorEnabled') === false) return verdict;
 
-      const floor = evaluate(snapshot, settings);
-      if (!floor) return verdict;
-      const floorRank = rank(floor.level);
-      const current = rank(verdict.risk);
-      if (floorRank < 0 || current >= floorRank) return verdict;
+      const original = rank(verdict.risk);
+      let level = original;
+      let reason = null;
+      let capped = false;
 
+      const cap = ceiling(snapshot, settings);
+      const capRank = cap ? rank(cap.level) : -1;
+      if (capRank >= 0 && level > capRank) {
+        level = capRank;
+        reason = cap.reason;
+        capped = true;
+      }
+
+      const floor = evaluate(snapshot, settings);
+      const floorRank = floor ? rank(floor.level) : -1;
+      if (floorRank >= 0 && level < floorRank) {
+        level = floorRank;
+        reason = floor.reason;
+        capped = false;
+      }
+
+      if (level === original || !reason) return verdict;
       return {
         ...verdict,
-        risk: floor.level,
-        raisedFrom: LEVELS[current] || 'unknown',
-        raisedReason: floor.reason
+        risk: LEVELS[level],
+        [capped ? 'loweredFrom' : 'raisedFrom']: LEVELS[original] || 'unknown',
+        [capped ? 'loweredReason' : 'raisedReason']: reason
       };
     } catch (err) {
       return verdict;
     }
   };
 
-  return { LEVELS, evaluate, apply };
+  return { LEVELS, evaluate, ceiling, apply };
 })();

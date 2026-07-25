@@ -110,3 +110,88 @@ test('thresholds follow the settings rather than hard-coded numbers', () => {
   // Missing settings fall back to the documented defaults.
   assert.equal(F().evaluate({ safety: { taxSell: 25 } }, undefined).level, 'high');
 });
+
+// The reported FORAI case: lpBurned 0 / lpLocked 0, nothing actually happening,
+// and the model still returned CRITICAL on its own.
+const forai = {
+  audit: { danger: false, critical: false },
+  safety: { taxSell: 0, lpBurned: 0, lpLocked: 0, top10: 18 },
+  flow: { devSold: false, sniperNetUsd: 0, buyRatio: 0.62, top3TraderShare: 0.26 },
+  price: { changePct1m: -0.7, changePct5m: -1.2 }
+};
+
+test('capability without an event caps the level at medium', () => {
+  const cap = F().ceiling(forai, settings);
+  assert.equal(cap.level, 'medium');
+  assert.match(cap.reason, /baseline for every token here/);
+
+  const out = F().apply({ risk: 'critical', headline: 'LP can be pulled' }, forai, settings);
+  assert.equal(out.risk, 'medium');
+  assert.equal(out.loweredFrom, 'critical');
+  assert.match(out.loweredReason, /no hazard is actually happening yet/);
+  assert.equal(out.raisedReason, undefined);
+});
+
+test('an observable event lifts the cap so real danger still reads high', () => {
+  const cases = [
+    ['the creator is selling', { ...forai, flow: { ...forai.flow, devSold: true } }],
+    ['snipers are dumping', { ...forai, flow: { ...forai.flow, sniperNetUsd: -800 } }],
+    ['the price is already falling', { ...forai, price: { changePct5m: -12 } }],
+    ['the audit flags the contract', { ...forai, audit: { danger: true } }],
+    ['the sell tax blocks the exit', { ...forai, safety: { ...forai.safety, taxSell: 30 } }]
+  ];
+  for (const [label, snapshot] of cases) {
+    assert.equal(F().ceiling(snapshot, settings), null, label);
+    assert.equal(
+      F().apply({ risk: 'critical' }, snapshot, settings).risk, 'critical', label
+    );
+  }
+});
+
+test('the two bounds never contradict each other', () => {
+  // Every floor condition is also an active hazard, except unprotected LP,
+  // whose floor equals the cap — so no snapshot can demand both a raise and a
+  // cap that cross.
+  const snapshots = [
+    forai,
+    { ...forai, audit: { danger: true } },
+    { ...forai, safety: { ...forai.safety, taxSell: 30 } },
+    { safety: {} },
+    {}
+  ];
+  for (const snapshot of snapshots) {
+    const floor = F().evaluate(snapshot, settings);
+    const cap = F().ceiling(snapshot, settings);
+    if (!floor || !cap) continue;
+    assert.ok(
+      F().LEVELS.indexOf(floor.level) <= F().LEVELS.indexOf(cap.level),
+      `floor ${floor.level} must not exceed cap ${cap.level}`
+    );
+  }
+});
+
+test('a verdict already inside both bounds is returned untouched', () => {
+  const verdict = { risk: 'medium', headline: 'ordinary token' };
+  assert.equal(F().apply(verdict, forai, settings), verdict);
+  // Low is below the LP floor, so it is raised rather than left alone.
+  const low = F().apply({ risk: 'low' }, forai, settings);
+  assert.equal(low.risk, 'medium');
+  assert.match(low.raisedReason, /neither burned nor locked/);
+});
+
+test('the cap is off when the floor switch is off', () => {
+  const off = { ...settings, riskFloorEnabled: false };
+  assert.equal(F().apply({ risk: 'critical' }, forai, off).risk, 'critical');
+});
+
+test('without tape data there is no cap, so a partial snapshot is not downgraded', () => {
+  // "Nothing is happening" cannot be asserted from a snapshot that carries
+  // neither flow nor price; leaving the model's level alone is the honest read.
+  assert.equal(F().ceiling({ safety: { lpBurned: 0, lpLocked: 0 } }, settings), null);
+  assert.equal(F().ceiling({ audit: { danger: false } }, settings), null);
+  assert.equal(F().ceiling({}, settings), null);
+  assert.equal(F().apply({ risk: 'critical' }, { safety: { top10: 20 } }, settings).risk,
+    'critical');
+  // An empty flow object is still evidence the tape was read.
+  assert.equal(F().ceiling({ flow: {} }, settings).level, 'medium');
+});

@@ -70,6 +70,7 @@ const DEFAULTS = {
   advisorHorizonMin: 10,
   riskFloorEnabled: true,
   advisorFloorLpPct: 50,
+  advisorActiveSniperUsd: 500,
   memeBadges: ['Pons', 'bow.fun', 'Flap', 'Circus', 'Charms', 'Long.xyz', 'Bankr', 'Ape Store',
     'Zora', 'Clanker', 'Flaunch', 'Stroid', 'Klik', 'Trench', 'Livo',
     'Pump.fun', 'PumpFun', 'PumpSwap', 'Bags', 'Meteora DBC'],

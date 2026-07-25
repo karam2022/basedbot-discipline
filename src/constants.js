@@ -128,7 +128,9 @@ BBD.DEFAULT_SETTINGS = Object.freeze({
   // in code, because prose the model can reinterpret has twice failed to hold.
   riskFloorEnabled: true,
   // Matches the intel chip's LP check, so the card and the chip cannot disagree.
-  advisorFloorLpPct: 50
+  advisorFloorLpPct: 50,
+  // Sniper outflow that counts as an event rather than a standing capability.
+  advisorActiveSniperUsd: 500
 });
 
 // chrome.storage.local keys.

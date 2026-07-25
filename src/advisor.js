@@ -203,12 +203,17 @@ BBD.advisor = (() => {
     // A level the model did not choose must say so, or the card reads as the
     // model contradicting the reasons printed directly beneath it.
     let raised = null;
-    if (typeof verdict.raisedReason === 'string' && verdict.raisedReason) {
+    const adjustment = typeof verdict.raisedReason === 'string' && verdict.raisedReason
+      ? { verb: 'Raised', from: verdict.raisedFrom, why: verdict.raisedReason }
+      : typeof verdict.loweredReason === 'string' && verdict.loweredReason
+        ? { verb: 'Capped', from: verdict.loweredFrom, why: verdict.loweredReason }
+        : null;
+    if (adjustment) {
       raised = document.createElement('div');
       raised.className = 'bbd-advisor-raised';
-      raised.textContent = `Raised from ${
-        typeof verdict.raisedFrom === 'string' ? verdict.raisedFrom : 'the model read'
-      } by the extension: ${verdict.raisedReason}.`;
+      raised.textContent = `${adjustment.verb} from ${
+        typeof adjustment.from === 'string' ? adjustment.from : 'the model read'
+      } by the extension: ${adjustment.why}.`;
     }
 
     const headline = document.createElement('div');
