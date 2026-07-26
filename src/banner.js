@@ -4,6 +4,26 @@
 
 BBD.banner = (() => {
   const notified = new Set(); // addrs already sent a Chrome notification this session
+  const sounded = new Set();  // actionKeys whose row is currently shown (sound fires on arrival only)
+
+  // Chime once per newly-appeared row, never on re-renders. A row that leaves
+  // (snoozed / dismissed / back under threshold) re-arms, so a refire dings
+  // again. If winners and warnings arrive in the same tick, the warning tone
+  // wins — protection beats celebration.
+  const maybeSound = (winners, givebacks, losers, settings) => {
+    const current = new Set(
+      [...winners, ...givebacks, ...losers].map((p) => p.actionKey)
+    );
+    if (settings.soundEnabled && BBD.sounds) {
+      const isNew = (p) => !sounded.has(p.actionKey);
+      const newDown = [...givebacks, ...losers].some(isNew);
+      const newUp = winners.some(isNew);
+      if (newDown) BBD.sounds.play('down', settings.soundVolumePct);
+      else if (newUp) BBD.sounds.play('up', settings.soundVolumePct);
+    }
+    sounded.clear();
+    current.forEach((k) => sounded.add(k));
+  };
 
   // kind 'win': pct at/above thresholdPct, re-fires after climbing another
   // refireStepPct. kind 'loss': pct at/below -stopLossPct, re-fires after
@@ -198,9 +218,11 @@ BBD.banner = (() => {
         ? eligible(positions, settings, snoozes, dismissed, 'loss')
         : [];
       if (winners.length === 0 && givebacks.length === 0 && losers.length === 0) {
+        sounded.clear(); // banner gone — next appearance chimes again
         hide();
         return;
       }
+      maybeSound(winners, givebacks, losers, settings);
       render(winners, givebacks, losers, settings);
       // Chrome notifications stay on the take-profit path (its background
       // dedupe is tuned for a rising pct); the loss nag lives in the banner.

@@ -232,3 +232,6 @@ textarea {
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; }
 }
+
+/* ---- Sound audition row ------------------------------------------------ */
+.bbd-sound-test { display: flex; gap: 14px; margin-top: 6px; }

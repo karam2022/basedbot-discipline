@@ -1,25 +1,42 @@
 {
   "manifest_version": 3,
   "name": "BasedBot Discipline",
-  "version": "1.12.0",
+  "version": "1.13.0",
   "description": "Hides meme coins on basedbot Pulse, nags you to take profit and cut losses, flags risky devs/contracts, and keeps a trade journal.",
-  "permissions": ["storage", "notifications", "unlimitedStorage"],
-  "host_permissions": ["https://basedbot.app/*", "https://api.telegram.org/*"],
-  "background": { "service_worker": "background.js" },
+  "permissions": [
+    "storage",
+    "notifications",
+    "unlimitedStorage"
+  ],
+  "host_permissions": [
+    "https://basedbot.app/*",
+    "https://api.telegram.org/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
   "action": {
     "default_popup": "popup.html",
     "default_title": "BasedBot Discipline"
   },
-  "icons": { "128": "icons/icon128.png" },
+  "icons": {
+    "128": "icons/icon128.png"
+  },
   "content_scripts": [
     {
-      "matches": ["https://basedbot.app/*"],
-      "js": ["src/interceptor.js"],
+      "matches": [
+        "https://basedbot.app/*"
+      ],
+      "js": [
+        "src/interceptor.js"
+      ],
       "run_at": "document_start",
       "world": "MAIN"
     },
     {
-      "matches": ["https://basedbot.app/*"],
+      "matches": [
+        "https://basedbot.app/*"
+      ],
       "js": [
         "src/constants.js",
         "src/store.js",
@@ -30,12 +47,15 @@
         "src/filter.js",
         "src/intel.js",
         "src/pnl.js",
+        "src/sounds.js",
         "src/banner.js",
         "src/guard.js",
         "src/dump.js",
         "src/main.js"
       ],
-      "css": ["styles.css"],
+      "css": [
+        "styles.css"
+      ],
       "run_at": "document_idle"
     }
   ]

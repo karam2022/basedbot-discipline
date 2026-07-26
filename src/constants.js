@@ -19,6 +19,11 @@ BBD.DEFAULT_SETTINGS = Object.freeze({
   // discipline rule without executing trades.
   peakGivebackEnabled: true,
   peakGivebackPct: 15,
+  // Banner sounds: a rising chime when a position newly crosses take-profit,
+  // a soft low tone when a stop-loss / peak-giveback row appears. Synthesized
+  // in src/sounds.js — no audio files, volume 0–100.
+  soundEnabled: true,
+  soundVolumePct: 40,
   // Trade journal: log every position's entry safety snapshot, peak, and last
   // fresh exit estimate so the popup can show behavior metrics honestly.
   journalEnabled: true,

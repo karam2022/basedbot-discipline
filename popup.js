@@ -87,7 +87,8 @@ const TOGGLES = {
     ['reminderEnabled', 'Take-profit reminders'],
     ['stopLossEnabled', 'Stop-loss nag', 'Nag when a position falls past your stop-loss'],
     ['peakGivebackEnabled', 'Peak-giveback nag', 'Nag when a winner hands back points from its peak'],
-    ['notifyEnabled', 'Chrome notifications', 'Desktop ping when a held position crosses the threshold']
+    ['notifyEnabled', 'Chrome notifications', 'Desktop ping when a held position crosses the threshold'],
+    ['soundEnabled', '🔊 Sound alerts', 'A rising chime for take-profit, a soft low tone for warnings']
   ],
   journalToggles: [
     ['journalEnabled', 'Keep a trade journal', 'Local-only lifecycle log — win rate, profit given back']
@@ -125,7 +126,8 @@ const NUMBERS = {
     ['snoozeMin', 'Snooze length', 1, 240, 'min'],
     ['refireStepPct', 'Re-nag after climb of', 1, 500, 'pts'],
     ['stopLossPct', 'Stop-loss at down', 1, 100, '%'],
-    ['peakGivebackPct', 'Peak-giveback after', 1, 500, 'pts']
+    ['peakGivebackPct', 'Peak-giveback after', 1, 500, 'pts'],
+    ['soundVolumePct', 'Sound volume', 0, 100, '%']
   ],
   creatorFields: [
     ['creatorMaxLaunches', 'Flag creator after N launches', 1, 100, ''],
@@ -354,6 +356,23 @@ const init = async () => {
   for (const [mount, list] of Object.entries(NUMBERS)) {
     const box = $(mount);
     list.forEach((spec) => box.append(renderNumber(spec, settings)));
+  }
+
+  // Audition buttons for the two banner sounds — plays at the volume currently
+  // in the field, so tuning is hear-as-you-type.
+  {
+    const row = document.createElement('div');
+    row.className = 'bbd-sound-test';
+    for (const [kind, label] of [['up', '▶ profit chime'], ['down', '▶ warning tone']]) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'linkbtn';
+      b.textContent = label;
+      // renderNumber keeps `settings` current, so this follows the field live
+      b.addEventListener('click', () => BBD.sounds.play(kind, settings.soundVolumePct));
+      row.append(b);
+    }
+    $('tpFields').append(row);
   }
 
   $('maxTaxPct').value = String(settings.maxTaxPct);
