@@ -8,6 +8,8 @@ const DEFAULTS = {
   laptopHotAlerts: true,
   reminderEnabled: true,
   notifyEnabled: false,
+  soundEnabled: true,
+  soundVolumePct: 40,
   thresholdPct: 20,
   snoozeMin: 15,
   refireStepPct: 10,

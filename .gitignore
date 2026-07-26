@@ -5,3 +5,6 @@ vps-watcher/seen.json
 verbesserung.md
 _preview.html
 test/paper.test.js
+
+# private strategy backtest — never ship
+vps-watcher/backtest-band.mjs
