@@ -305,19 +305,27 @@ BBD.advisor = (() => {
   };
 
   const tapeFeatures = async (addr, chain, creatorAddr, pool) => {
-    if (!pool || !pool.pool) return {};
-    const params = new URLSearchParams();
-    const tapeChain = pool.chain || chain;
-    if (tapeChain) params.set('chain', tapeChain);
-    params.set('pool', pool.pool);
-
+    const tapeChain = (pool && pool.chain) || chain;
+    const family = BBD.chain ? BBD.chain.family(tapeChain, addr) : null;
     try {
-      const response = await fetch(`/api/token/${addr}/trades?${params}`, {
-        credentials: 'same-origin'
-      });
-      if (!response.ok) return {};
-      const json = await response.json();
-      const trades = (json && json.data) || [];
+      let trades;
+      if (family === 'svm') {
+        // Solana's REST tape answers 500; the rows come from the tap instead
+        // (feed.svmTradesFor), which is populated while the token page is open.
+        trades = BBD.feed.svmTradesFor(addr);
+        if (!trades.length) return {};
+      } else {
+        if (!pool || !pool.pool) return {};
+        const params = new URLSearchParams();
+        if (tapeChain) params.set('chain', tapeChain);
+        params.set('pool', pool.pool);
+        const response = await fetch(`/api/token/${addr}/trades?${params}`, {
+          credentials: 'same-origin'
+        });
+        if (!response.ok) return {};
+        const json = await response.json();
+        trades = (json && json.data) || [];
+      }
       const now = Date.now();
       const flow = BBD.candles.flow(trades, {
         windowMs: FLOW_WINDOW_MS,
@@ -365,14 +373,19 @@ BBD.advisor = (() => {
       if (Object.keys(cohort).length) out.cohort = cohort;
 
       const rows = BBD.feed.holdersFor(addr);
+      // The pool holds most of a bonding curve's supply; it is not a holder.
+      const poolInfo = BBD.feed.poolFor(addr);
+      const poolAddress = (poolInfo && poolInfo.pool) || null;
       const book = BBD.holders.analyze(rows, {
         minHolders: settings.holderMinCount,
-        minClusterWallets: settings.holderClusterMinWallets
+        minClusterWallets: settings.holderClusterMinWallets,
+        poolAddress
       });
       const track = BBD.holders.trackFlow(rows, tape, {
         topN: settings.holderTrackTopN,
         windowMs: (settings.holderTrackWindowSec || 300) * 1000,
-        now: Date.now()
+        now: Date.now(),
+        poolAddress
       });
       const holders = {};
       if (book.enough) {

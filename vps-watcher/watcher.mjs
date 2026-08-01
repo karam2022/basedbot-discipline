@@ -59,7 +59,23 @@ const EXIT_CHECK_MS = (config.exitCheckMin || 5) * 60 * 1000;
 const EXIT_HOLDER_DROP_PCT = config.exitHolderDropPct || 15;
 const EXIT_STRUCT_RISE_PTS = config.exitStructRisePts || 10;
 const TRACK_TTL_MS = (config.trackTtlDays || 7) * 24 * 3600 * 1000;
-const CHAIN_IDS = { robinhood: 4663, base: 8453, ethereum: 1, solana: 0 };
+// Chain ids the basedbot API accepts. It lists them itself when handed an
+// invalid one, and 0 is NOT among them — Solana is -1 (docs/solana-support.md
+// §1). A wrong id makes every enrichment call fail, so an unknown chain must
+// resolve to null and skip enrichment rather than silently send a rejected id.
+const CHAIN_IDS = {
+  solana: -1, ethereum: 1, bnb: 56, unichain: 130, monad: 143,
+  abstract: 2741, base: 8453, robinhood: 4663, arbitrum: 42161,
+  avalanche: 43114, ink: 57073, story: 1514, plasma: 9745
+};
+const chainIdFor = (chain) => {
+  const id = CHAIN_IDS[String(chain || '').toLowerCase()];
+  if (id === undefined) {
+    console.error(`[watcher] unknown chain "${chain}" — no numeric id, enrichment skipped.`);
+    return null;
+  }
+  return id;
+};
 
 if (!TG_TOKEN) console.error('[watcher] tgToken missing in config.json — alerts will NOT send.');
 
@@ -292,8 +308,17 @@ const socialScore = (card) => {
   return s;
 };
 
-const safetyPass = (s) => {
-  if (!s || !s.paid) return false;
+// Mirrors src/filter.js isHot + src/chain.js dexPaidGate — keep them in step.
+// "Dex Paid" is a DexScreener ad purchase, not a safety property. It gates 🔥
+// only where it discriminates; on Solana's launchpad population it is
+// vanishingly rare (measured 1 of 300 Pulse tokens), so requiring it there
+// would silence 🔥 entirely.
+const DEX_PAID_GATE_CHAINS = new Set(['robinhood', 'base', 'ethereum', 'bnb',
+  'arbitrum', 'avalanche', 'unichain', 'ink', 'story', 'plasma', 'monad', 'abstract']);
+
+const safetyPass = (s, chain) => {
+  if (!s) return false;
+  if (DEX_PAID_GATE_CHAINS.has(String(chain || '').toLowerCase()) && !s.paid) return false;
   const ratio = s.holders > 0 ? s.pro / s.holders : 0;
   return s.top10 <= GATES.top10 && s.dev <= GATES.dev &&
     s.snipers <= GATES.snipers && s.bundlers <= GATES.bundlers &&
@@ -333,6 +358,8 @@ const sanitizeAlertText = (text, maxLen = 48) => {
 const fetchMetadata = async (chain, addrs) => {
   const page = pages.get(chain);
   if (!page || !addrs.length) return {};
+  const numericChain = chainIdFor(chain);
+  if (numericChain === null) return {};
   try {
     const res = await page.evaluate(async ({ addrs, chainId }) => {
       const r = await fetch('/api/tokens/metadata', {
@@ -343,7 +370,7 @@ const fetchMetadata = async (chain, addrs) => {
       if (!r.ok) return {};
       const j = await r.json().catch(() => null);
       return (j && j.data) || {};
-    }, { addrs, chainId: CHAIN_IDS[chain] || 0 });
+    }, { addrs, chainId: numericChain });
     const map = {};
     for (const [k, v] of Object.entries(res)) {
       map[k.replace(/-\d+$/, '').toLowerCase()] = v;
@@ -461,7 +488,7 @@ const fetchTrackedMetrics = async (chain, addrs) => {
       if (!r.ok) return { error: r.status };
       const j = await r.json().catch(() => null);
       return { data: (j && j.data) || {} };
-    }, { addrs, chainId: CHAIN_IDS[chain] || 0 });
+    }, { addrs, chainId: numericChain });
   } catch (err) {
     console.error(`[watcher] metrics fetch failed on ${chain}:`, err.message.slice(0, 80));
     return null;
@@ -625,7 +652,7 @@ const tick = async () => {
         if (!card.addr) continue;
         const kw = hasKw(card.blob);
         const score = socialScore(card);
-        const safe = safetyPass(card.stats);
+        const safe = safetyPass(card.stats, chain);
         const replica = replicaCheck(card, names);
         const mcUsd = moneyNum(card.mc);
         const age = ageMin(card.age);

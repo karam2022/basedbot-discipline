@@ -28,14 +28,18 @@ BBD.KEYWORD_PENALTY = -3;     // meme-named
 // bury a token whose holder structure is clean (matches the filters credible
 // traders repeat: top10 <30%, low dev/snipers/bundlers/insiders, Dex Paid).
 // Gated on ≥50 holders so brand-new launches (all stats 0%) can't fake clean.
+// An unmeasured stat is null, and null <= n is true — without the known()
+// guard a card whose stats haven't rendered (Solana shows "?%") would collect
+// the full bonus for values nobody has seen.
 BBD.statBonus = (stats) => {
-  if (!stats || stats.holders === null || stats.holders < 50) return 0;
+  if (!stats || typeof stats.holders !== 'number' || stats.holders < 50) return 0;
+  const known = (...keys) => keys.every((k) => typeof stats[k] === 'number');
   let bonus = 0;
   if (stats.paid) bonus += 1;
-  if (stats.dev <= 2) bonus += 1;
-  if (stats.snipers <= 10 && stats.bundlers <= 10) bonus += 1;
-  if (stats.insiders <= 10) bonus += 1;
-  if (stats.top10 <= 30) bonus += 1;
+  if (known('dev') && stats.dev <= 2) bonus += 1;
+  if (known('snipers', 'bundlers') && stats.snipers <= 10 && stats.bundlers <= 10) bonus += 1;
+  if (known('insiders') && stats.insiders <= 10) bonus += 1;
+  if (known('top10') && stats.top10 <= 30) bonus += 1;
   if (stats.holders >= 300) bonus += 1;
   return bonus;
 };

@@ -62,10 +62,39 @@ BBD.candles = (() => {
   // Confirmed-only metrics do not flicker when a preconfirmation disappears
   // or lands in a different order. A missing flag is accepted for older API
   // payloads; only the explicit unconfirmed state is excluded.
+  // Solana rows come from Mobula (api/2/token/trades) and describe the same
+  // trade in a different vocabulary: epoch-ms `date`, a "buy"/"sell" `type`,
+  // camelCase USD amounts and a `labels` array in place of the is_* booleans.
+  // Solana has no block/log index, so ordering falls back to the tx hash.
+  const svmTrade = (trade, now) => {
+    if (typeof trade.transactionHash !== 'string' || !trade.transactionHash) return null;
+    const type = typeof trade.type === 'string' ? trade.type.toLowerCase() : '';
+    // An unrecognized operation must be dropped, not read as a sell.
+    if (type !== 'buy' && type !== 'sell') return null;
+    const ts = nonNegative(trade.date);
+    if (ts === null || ts === 0 || ts > now) return null;
+    const label = (needle) => Array.isArray(trade.labels) &&
+      trade.labels.some((l) => typeof l === 'string' && l.toLowerCase().includes(needle));
+    return {
+      ts,
+      isBuy: type === 'buy',
+      volume: nonNegative(trade.baseTokenAmountUSD) ??
+        nonNegative(trade.quoteTokenAmountUSD) ?? 0,
+      trader: typeof trade.swapSenderAddress === 'string' ? trade.swapSenderAddress
+        : (typeof trade.transactionSenderAddress === 'string'
+          ? trade.transactionSenderAddress : ''),
+      isPro: label('protrader'),
+      isSniper: label('sniper'),
+      block: null,
+      logIndex: null,
+      txHash: trade.transactionHash
+    };
+  };
+
   const baseTrade = (trade, now) => {
     try {
       if (!trade || typeof trade !== 'object' || trade.preconfirm === true) return null;
-      if (trade.is_buy !== true && trade.is_buy !== false) return null;
+      if (trade.is_buy !== true && trade.is_buy !== false) return svmTrade(trade, now);
       const ts = parseTs(trade.timestamp);
       if (ts === null || ts > now) return null;
       return {
@@ -115,7 +144,8 @@ BBD.candles = (() => {
         const row = baseTrade(trade, now);
         if (!row) continue;
         try {
-          const price = nonNegative(trade.price_usd);
+          const price = nonNegative(trade.price_usd) ??
+            nonNegative(trade.baseTokenPriceUSD);
           if (price === null) continue;
           rows.push({ ...row, price });
         } catch (err) {

@@ -240,12 +240,21 @@ BBD.tokenAddrFromHref = (href) => {
   return m[1].startsWith('0x') ? m[1].toLowerCase() : m[1];
 };
 
+// BasedBot spells one chain several ways (/pulse/solana vs /token/sol vs the
+// API's -1). Canonicalize before keying or comparing, or the same token reads
+// as two different positions depending on which surface reported it.
+BBD.canonicalChain = (chain) => {
+  const canon = BBD.chain && BBD.chain.canonical ? BBD.chain.canonical(chain) : null;
+  if (canon) return canon;
+  return String(chain || '').toLowerCase().replace(/[^a-z0-9_-]/g, '') || null;
+};
+
 // Position identity must include chain and wallet: identical EVM contract
 // addresses can exist on multiple chains, and BasedBot may expose more than
 // one connected wallet. Legacy address-only entries remain readable.
 BBD.positionKey = (addr, chain, wallet) => {
   if (!addr) return null;
-  const safeChain = String(chain || 'unknown').toLowerCase().replace(/[^a-z0-9_-]/g, '') || 'unknown';
+  const safeChain = BBD.canonicalChain(chain) || 'unknown';
   const safeWallet = String(wallet || 'default').replace(/[^a-zA-Z0-9_-]/g, '') || 'default';
   return `${safeChain}|${safeWallet}|${addr}`;
 };
@@ -259,7 +268,11 @@ BBD.positionAddr = (key, position) => {
 BBD.positionIsToken = (key, position, addr, chain) => {
   if (!addr || BBD.positionAddr(key, position) !== addr) return false;
   if (!chain || !position || !position.chain) return true;
-  return String(position.chain).toLowerCase() === String(chain).toLowerCase();
+  // Compare canonically: a position stored from /token/sol/… must still match
+  // a lookup made from /pulse/solana, and legacy entries keep matching too.
+  const a = BBD.canonicalChain(position.chain);
+  const b = BBD.canonicalChain(chain);
+  return a !== null && b !== null && a === b;
 };
 
 BBD.isHeld = (positions, addr, chain) => Object.entries(positions || {})

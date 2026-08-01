@@ -96,6 +96,7 @@ const load = (rel) => {
   // eslint-disable-next-line no-eval
   (0, eval)(src);
 };
+load('src/chain.js');
 load('src/filter.js');
 const F = BBD.filter;
 const ci = (card) => card._children.find((c) => c.className.includes('bbd-cardintel'));
@@ -138,4 +139,41 @@ test('the per-card safety readout renders, updates and respects the toggle', asy
   SETTINGS.cardIntelEnabled = false;
   await F.scan();
   assert.equal(ci(A).style.display, 'none');
+});
+
+test('Dex Paid gates 🔥 on Robinhood but not on Solana', async () => {
+  // Measured: 1 of 300 Solana Pulse tokens has dexscreenerAdPaid true, so
+  // requiring it there would silence 🔥 entirely. Everything else about this
+  // card is identical between the two runs — only the feed's chain differs.
+  const addr = '0xdeadbeef';
+  const card = makeCard({ href: `/token/x/${addr}`, titles: ['Website'], text: 'Solid Project' });
+  STATSBY = {
+    [addr]: {
+      holders: 200, pro: 20, top10: 10, dev: 0,
+      snipers: 0, bundlers: 0, insiders: 0, paid: false
+    }
+  };
+  const priorMin = SETTINGS.hotMinUtilityScore;
+  SETTINGS.hotMinUtilityScore = 0; // scoreCard is stubbed to 0 in this harness
+  cards = [card];
+
+  try {
+    global.location.pathname = '/pulse/robinhood';
+    await F.scan();
+    assert.equal(card.classList.contains('bbd-hot'), false, 'unpaid must not be 🔥 on Robinhood');
+
+    global.location.pathname = '/pulse/solana';
+    await F.scan();
+    assert.equal(card.classList.contains('bbd-hot'), true, 'unpaid must still reach 🔥 on Solana');
+
+    // Every other gate still applies on Solana — this is not a free pass.
+    STATSBY[addr].top10 = 90;
+    await F.scan();
+    assert.equal(card.classList.contains('bbd-hot'), false, 'top10 gate must still bite on Solana');
+  } finally {
+    SETTINGS.hotMinUtilityScore = priorMin;
+    global.location.pathname = '/pulse/robinhood';
+    STATSBY = {};
+    cards = [];
+  }
 });

@@ -14,6 +14,7 @@
 BBD.creator = (() => {
   let model = {};              // creatorAddr -> { tokens: { addr: {...} }, ts }
   const tokenCreator = new Map(); // addr -> creatorAddr (reverse index)
+  const ingested = new Map();     // creatorAddr -> ts of the folded-in report
   let dirty = false;
   let hydrated = false;
 
@@ -63,11 +64,29 @@ BBD.creator = (() => {
     if (JSON.stringify(t) !== before) dirty = true;
   };
 
+  // Solana reports the creator's launch history outright (api/2/wallet/deployer
+  // → pagination.total), which beats waiting to observe launches one card at a
+  // time. Its token rows go through observe() so the rug test is unchanged;
+  // only the count is taken on trust, because the endpoint pages at 50 and the
+  // rows alone would undercount a prolific farmer.
+  const noteDeployer = (creatorAddr, report) => {
+    if (!creatorAddr || !report) return;
+    for (const t of report.tokens || []) {
+      observe(t.addr, creatorAddr, { symbol: t.symbol, mcap: t.mcap, liq: t.liq });
+    }
+    const c = model[creatorAddr];
+    if (c && typeof report.total === 'number' && report.total > 0) {
+      c.reportedLaunches = Math.max(c.reportedLaunches || 0, report.total);
+      dirty = true;
+    }
+  };
+
   const reputation = (creatorAddr, settings) => {
     const c = creatorAddr && model[creatorAddr];
     const tokens = c ? Object.values(c.tokens) : [];
     const ruggedCount = tokens.filter((t) => isRug(t, settings)).length;
-    const launchCount = tokens.length;
+    // Observation can only ever undercount, so a reported total wins.
+    const launchCount = Math.max(tokens.length, (c && c.reportedLaunches) || 0);
     const flagged = settings.creatorGuardEnabled && (
       launchCount >= settings.creatorMaxLaunches ||
       ruggedCount >= settings.creatorMaxRugs
@@ -79,6 +98,15 @@ BBD.creator = (() => {
   // creator from the session's observations first, then the feed cache.
   const verdictFor = (tokenAddr, settings) => {
     const creatorAddr = tokenCreator.get(tokenAddr) || BBD.feed.creatorFor(tokenAddr);
+    // Fold in the reported history the moment it is available, so the first
+    // verdict after opening a token page already reflects it.
+    if (creatorAddr && BBD.feed.deployerFor) {
+      const report = BBD.feed.deployerFor(creatorAddr);
+      if (report && report.ts !== ingested.get(creatorAddr)) {
+        ingested.set(creatorAddr, report.ts);
+        noteDeployer(creatorAddr, report);
+      }
+    }
     return reputation(creatorAddr, settings);
   };
 
@@ -113,6 +141,10 @@ BBD.creator = (() => {
       ]);
       for (const addr of addrs) tokens[addr] = mergeToken(ca?.tokens?.[addr], cb?.tokens?.[addr]);
       out[key] = { tokens, ts: Math.max(ca?.ts || 0, cb?.ts || 0) };
+      // A reported launch count is a fact about the creator, not about any one
+      // token — carry the larger across tabs rather than letting one clobber it.
+      const reported = Math.max(ca?.reportedLaunches || 0, cb?.reportedLaunches || 0);
+      if (reported > 0) out[key].reportedLaunches = reported;
     }
     return out;
   };
@@ -128,5 +160,5 @@ BBD.creator = (() => {
 
   hydrate();
 
-  return { observe, verdictFor, isFlagged, reputation, flush };
+  return { observe, noteDeployer, verdictFor, isFlagged, reputation, flush };
 })();

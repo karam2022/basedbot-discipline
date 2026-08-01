@@ -78,33 +78,43 @@ BBD.dump = (() => {
       for (const pos of selected) {
         const addr = pos.addr;
         const pool = BBD.feed.poolFor(addr);
-        if (!pool || !pool.pool) continue;
-        const params = new URLSearchParams();
-        const chain = pool.chain || pos.chain;
-        if (chain) params.set('chain', chain);
-        params.set('pool', pool.pool);
+        const chain = (pool && pool.chain) || pos.chain;
+        const family = BBD.chain ? BBD.chain.family(chain, addr) : null;
         let trades;
-        try {
-          const res = await fetch(`/api/token/${addr}/trades?${params}`, {
-            credentials: 'same-origin'
-          });
-          if (!res.ok) {
-            const failureKey = addr.startsWith('0x') ? addr.toLowerCase() : addr;
-            if (res.status >= 400 && res.status < 500 && !warnedClientErrors.has(failureKey)) {
-              warnedClientErrors.add(failureKey);
-              console.warn(`[bbd] dump trades request failed for ${addr}: ${res.status}`);
+        if (family === 'svm') {
+          // Solana has no pollable tape: /api/token/{a}/trades answers 500 and
+          // Mobula's replacement is only reachable as a tap on the page's own
+          // request. So a held Solana token is watched while its page is open
+          // and silent otherwise — a real gap, not a silent failure.
+          trades = BBD.feed.svmTradesFor(addr);
+          if (!trades.length) continue;
+        } else {
+          if (!pool || !pool.pool) continue;
+          const params = new URLSearchParams();
+          if (chain) params.set('chain', chain);
+          params.set('pool', pool.pool);
+          try {
+            const res = await fetch(`/api/token/${addr}/trades?${params}`, {
+              credentials: 'same-origin'
+            });
+            if (!res.ok) {
+              const failureKey = addr.startsWith('0x') ? addr.toLowerCase() : addr;
+              if (res.status >= 400 && res.status < 500 && !warnedClientErrors.has(failureKey)) {
+                warnedClientErrors.add(failureKey);
+                console.warn(`[bbd] dump trades request failed for ${addr}: ${res.status}`);
+              }
+              continue;
             }
-            continue;
+            const json = await res.json();
+            trades = json && json.data;
+          } catch (e) {
+            continue; // endpoint hiccup — try again next tick
           }
-          const json = await res.json();
-          trades = json && json.data;
-        } catch (e) {
-          continue; // endpoint hiccup — try again next tick
+          // This poll is the freshest price we get for held tokens (the live
+          // swap socket is unreachable — see feed.notePrice) — feed the ticks.
+          BBD.feed.notePrice(addr, trades);
+          BBD.feed.noteTrades(addr, trades);
         }
-        // This poll is the freshest price we get for held tokens (the live swap
-        // socket is unreachable — see feed.notePrice) — feed the tick cache.
-        BBD.feed.notePrice(addr, trades);
-        BBD.feed.noteTrades(addr, trades);
         // Dev/whale detection is gated by its own master switch, so the
         // AI exit-timing alarm can share this poll even when it's off.
         if (settings.dumpAlertsEnabled) {

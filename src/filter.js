@@ -45,7 +45,13 @@ BBD.filter = (() => {
       .filter((el) => el.childElementCount === 0)
       .map((el) => el.textContent.trim())
       .filter(Boolean);
-    const pctNum = (t) => (t.startsWith('<') ? 0.5 : Number(t.replace('%', '')));
+    // "?%" is a real rendered value on Solana cards whose stats haven't
+    // resolved yet — it holds the slot, so it must be counted for the
+    // positional mapping but read as unknown, never as a number.
+    const pctNum = (t) => {
+      if (t.startsWith('?')) return null;
+      return t.startsWith('<') ? 0.5 : Number(t.replace('%', ''));
+    };
     const countNum = (t) => {
       const m = t.match(/^([\d.]+)(K|M)?$/);
       if (!m) return null;
@@ -53,7 +59,7 @@ BBD.filter = (() => {
       return Number(m[1]) * mult;
     };
     const pctIdx = leaves
-      .map((t, i) => (/^<?\d+(\.\d+)?%$/.test(t) ? i : -1))
+      .map((t, i) => (/^(<?\d+(\.\d+)?|\?)%$/.test(t) ? i : -1))
       .filter((i) => i >= 0);
     if (pctIdx.length < 5) return null;
     // Layout canary (#6): the positional mapping assumes a known card shape.
@@ -62,7 +68,8 @@ BBD.filter = (() => {
     if (pctIdx.length > 8) return layoutSuspect('too many % values on card');
     const last5 = pctIdx.slice(-5);
     const [top10, dev, snipers, bundlers, insiders] = last5.map((i) => pctNum(leaves[i]));
-    if ([top10, dev, snipers, bundlers, insiders].some((v) => !(v >= 0 && v <= 100))) {
+    if ([top10, dev, snipers, bundlers, insiders]
+      .some((v) => v !== null && !(v >= 0 && v <= 100))) {
       return layoutSuspect('percentage out of 0-100 range');
     }
     const holders = countNum(leaves[last5[0] - 2] || '');
@@ -81,8 +88,17 @@ BBD.filter = (() => {
     return null;
   };
 
-  const isHot = (stats, utilityScore, settings) => {
-    if (!settings.hotEnabled || !stats || !stats.paid) return false;
+  const isHot = (stats, utilityScore, settings, chain) => {
+    if (!settings.hotEnabled || !stats) return false;
+    // Dex Paid gates 🔥 only where it discriminates. See chain.js dexPaidGate:
+    // on Solana it is rare enough that requiring it would silence 🔥 entirely.
+    const gateOnPaid = !BBD.chain || BBD.chain.supports(chain, 'dexPaidGate');
+    if (gateOnPaid && !stats.paid) return false;
+    // Every gate below is a "<=" against a stat. An unknown stat is null, and
+    // null <= n is true — a card whose stats haven't rendered would sail
+    // through every gate at once. 🔥 requires the full set, measured.
+    const gated = ['top10', 'dev', 'snipers', 'bundlers', 'insiders', 'holders', 'pro'];
+    if (gated.some((k) => typeof stats[k] !== 'number')) return false;
     const proRatio = stats.holders > 0 ? stats.pro / stats.holders : 0;
     return (
       utilityScore >= settings.hotMinUtilityScore &&
@@ -112,7 +128,7 @@ BBD.filter = (() => {
   // caller (#7) and shared with the alert path; badDev (creator-guard) and
   // danger (audit-guard) verdicts are likewise computed once so the class
   // toggles and score agree.
-  const classify = (stats, info, settings, overrides, positions, intel, badDev, danger) => {
+  const classify = (stats, info, settings, overrides, positions, intel, badDev, danger, chain) => {
     // Social evidence only — clean holder stats must never buy a meme into 🔥
     // (PONSINU lesson), so the stat bonus counts toward hide/gem but not hot.
     const social = BBD.scoreCard(info, settings) + intelBonus(info.addr, intel);
@@ -123,7 +139,7 @@ BBD.filter = (() => {
     // A flagged creator or a drainable contract can never buy a token into 🔥 —
     // reputation/audit outweigh a clean-looking holder snapshot (the snapshot is
     // exactly what ruggers optimize).
-    const hot = !kwHit && !badDev && !danger && isHot(stats, social, settings);
+    const hot = !kwHit && !badDev && !danger && isHot(stats, social, settings, chain);
     const gem = score >= settings.gemMinScore;
     const positive = hot ? 'hot' : gem ? 'gem' : 'show';
     if (info.addr && BBD.isHeld(positions, info.addr)) return positive; // held: never hide
@@ -323,6 +339,9 @@ BBD.filter = (() => {
     let hidden = 0;
     let gems = 0;
     let hots = 0;
+    // Resolved once per scan, not per card: which gates apply depends on the
+    // chain this feed belongs to, and every card on the page shares it.
+    const pageChain = BBD.chain ? BBD.chain.route() : null;
     for (const card of cards) {
       const info = cardInfo(card);
       // API cache (immune to layout changes) is primary; the positional DOM
@@ -336,7 +355,7 @@ BBD.filter = (() => {
       }
       const auditV = settings.auditGuardEnabled && info.addr ? BBD.feed.auditFor(info.addr) : null;
       const danger = !!(auditV && auditV.danger);
-      const state = classify(stats, info, settings, overrides, positions, intel, badDev, danger);
+      const state = classify(stats, info, settings, overrides, positions, intel, badDev, danger, pageChain);
       // Each gate independent (v1.8.2): hiding follows filterEnabled, highlights
       // follow hotEnabled — a token can be highlighted while hiding is off, and
       // hidden while highlights are off.

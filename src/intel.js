@@ -71,21 +71,61 @@ BBD.intel = (() => {
       : { buyTax: null, sellTax: null };
   };
 
-  // Each check: [name, pass|null]. null = unknown, doesn't count against.
-  const runChecks = (m, settings) => [
-    ['Top10 ≤30%', m.top10 === null ? null : m.top10 <= settings.hotMaxTop10],
-    ['Dev ≤2%', m.dev === null ? null : m.dev <= settings.hotMaxDev],
-    ['Snipers ≤15%', m.snipers === null ? null : m.snipers <= settings.hotMaxSnipers],
-    ['Insiders ≤20%', m.insiders === null ? null : m.insiders <= settings.hotMaxInsiders],
-    ['Bundlers ≤15%', m.bundlers === null ? null : m.bundlers <= settings.hotMaxBundlers],
-    ['Dex Paid', m.dexPaid],
-    ['LP burned/locked', (m.lpBurned === null && m.lpLocked === null)
-      ? null : (m.lpBurned >= 50 || m.lpLocked >= 50)],
-    ['Renounced', m.renounced],
-    ['Holders ≥100', m.holders === null ? null : m.holders >= settings.hotMinHolders],
-    [`Tax ≤${settings.maxTaxPct}%`, (m.buyTax === null && m.sellTax === null)
-      ? null : (Math.max(m.buyTax || 0, m.sellTax || 0) <= settings.maxTaxPct)]
-  ];
+  // The Solana token page carries neither a Tax row nor a meaningful
+  // "Renounced" value, but api/2/token/security carries both plus the two SPL
+  // authorities. Fold it in so the chip reads from everything available rather
+  // than only from what the panel happens to render (docs/solana-support.md §3).
+  const withSecurity = (m, addr) => {
+    const sec = addr && BBD.feed.securityFor ? BBD.feed.securityFor(addr) : null;
+    if (!sec) return m;
+    const merged = { ...m };
+    // The panel wins where it has a value; the API only fills the gaps.
+    if (merged.buyTax === null && sec.buyTax !== null) merged.buyTax = sec.buyTax;
+    if (merged.sellTax === null && sec.sellTax !== null) merged.sellTax = sec.sellTax;
+    if (merged.top10 === null && sec.top10 !== null) merged.top10 = sec.top10;
+    merged.mintable = sec.mintable;
+    merged.freezable = sec.freezable;
+    return merged;
+  };
+
+  // Each check: [name, pass|null]. null = unknown OR not applicable on this
+  // chain — either way it leaves the denominator instead of sitting there as a
+  // silent pass or an uninformative failure.
+  const runChecks = (m, settings, chain) => {
+    const can = (capability) =>
+      !BBD.chain || BBD.chain.supports(chain, capability);
+    const checks = [
+      ['Top10 ≤30%', m.top10 === null ? null : m.top10 <= settings.hotMaxTop10],
+      ['Dev ≤2%', m.dev === null ? null : m.dev <= settings.hotMaxDev],
+      ['Snipers ≤15%', m.snipers === null ? null : m.snipers <= settings.hotMaxSnipers],
+      ['Insiders ≤20%', m.insiders === null ? null : m.insiders <= settings.hotMaxInsiders],
+      ['Bundlers ≤15%', m.bundlers === null ? null : m.bundlers <= settings.hotMaxBundlers],
+      // Where Dex Paid does not gate 🔥 it must not fail the chip either: on
+      // Solana all but ~0.3% of tokens are Unpaid, so a red mark there says
+      // nothing about the token. Paying still earns the pass.
+      ['Dex Paid', can('dexPaidGate') ? m.dexPaid : (m.dexPaid === true ? true : null)],
+      ['LP burned/locked', (m.lpBurned === null && m.lpLocked === null)
+        ? null : (m.lpBurned >= 50 || m.lpLocked >= 50)],
+      // EVM ownership renounce. Solana shows "—" here; its equivalent is the
+      // pair of SPL authorities below.
+      ['Renounced', can('renounced') ? m.renounced : null],
+      ['Holders ≥100', m.holders === null ? null : m.holders >= settings.hotMinHolders],
+      [`Tax ≤${settings.maxTaxPct}%`, (m.buyTax === null && m.sellTax === null)
+        ? null : (Math.max(m.buyTax || 0, m.sellTax || 0) <= settings.maxTaxPct)]
+    ];
+    // An active freeze authority can block the holder's sell and an active mint
+    // authority can dilute the supply at will — the two facts that decide
+    // whether a Solana position can be exited at all.
+    if (can('mintAuthority')) {
+      checks.push(['Mint revoked',
+        m.mintable === null || m.mintable === undefined ? null : m.mintable === false]);
+    }
+    if (can('freezeAuthority')) {
+      checks.push(['Freeze revoked',
+        m.freezable === null || m.freezable === undefined ? null : m.freezable === false]);
+    }
+    return checks;
+  };
 
   // One-line summary of the creator's track record, or '' when there's nothing
   // worth saying (unknown dev, or a single clean launch).
@@ -140,7 +180,8 @@ BBD.intel = (() => {
         rep = BBD.creator.verdictFor(addr, settings);
       }
       const danger = addr && settings.auditGuardEnabled ? BBD.feed.auditFor(addr) : null;
-      renderVerdict(runChecks(metrics, settings), rep, danger);
+      const chain = BBD.chain ? BBD.chain.route() : null;
+      renderVerdict(runChecks(withSecurity(metrics, addr), settings, chain), rep, danger);
       if (addr) await BBD.store.mergeEntry(BBD.KEYS.intel, addr, metrics);
     } catch (err) {
       console.warn('[bbd] intel scan failed', err);

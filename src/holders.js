@@ -55,10 +55,37 @@ BBD.holders = (() => {
 
   const round1 = (value) => Math.round(value * 10) / 10;
 
-  const analyze = (rows, options) => {
+  const addrKey = (value) => {
+    if (typeof value !== 'string' || !value) return null;
+    return value.startsWith('0x') ? value.toLowerCase() : value;
+  };
+
+  // The pool is not a holder. On a Solana bonding curve it sits at rank 1 with
+  // most of the supply — 100% before anyone has bought, 85% early on — so
+  // counting it makes every fresh launch read as extreme concentration and
+  // wastes a slot in the tracked top-N, where it can never appear as a trader.
+  // The API labels the row itself ("liquidityPool"); the known pool address is
+  // a fallback for any list that omits the label.
+  const isPoolRow = (row, poolKey) => {
+    if (!row) return false;
+    if (Array.isArray(row.labels) && row.labels.some((l) =>
+      typeof l === 'string' && l.toLowerCase().replace(/[^a-z]/g, '') === 'liquiditypool')) {
+      return true;
+    }
+    return poolKey !== null && addrKey(row.address) === poolKey;
+  };
+
+  const withoutPool = (rows, options) => {
+    const poolKey = addrKey(options && options.poolAddress);
+    return rows.filter((row) => !isPoolRow(row, poolKey));
+  };
+
+  const analyze = (rawRows, options) => {
     const result = empty();
     try {
-      if (!Array.isArray(rows) || !rows.length) return result;
+      if (!Array.isArray(rawRows) || !rawRows.length) return result;
+      const rows = withoutPool(rawRows, options);
+      if (!rows.length) return result;
       const minHolders = option(options, 'minHolders');
       const minClusterWallets = option(options, 'minClusterWallets');
 
@@ -145,7 +172,9 @@ BBD.holders = (() => {
   // answers "are the actual biggest holders selling right now", by matching the
   // rolling tape against the real top-N holder addresses. Addresses are read to
   // match and discarded; only the counts and net flow come back.
-  const trackFlow = (holderRows, tapeRows, options) => {
+  const trackFlow = (rawHolderRows, tapeRows, options) => {
+    const holderRows = Array.isArray(rawHolderRows)
+      ? withoutPool(rawHolderRows, options) : rawHolderRows;
     const result = {
       enough: false,
       tracked: 0,

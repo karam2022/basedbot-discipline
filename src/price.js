@@ -190,52 +190,72 @@ BBD.price = (() => {
       }
 
       const pool = BBD.feed.poolFor(addr);
-      // The page's own load request supplies this routing fact shortly after
-      // navigation; keep the last good price visible while waiting for it.
-      if (!pool || !pool.pool) {
-        if (BBD.scalp) BBD.scalp.hide();
-        return;
-      }
-
-      const params = new URLSearchParams();
       const route = path.match(/\/token\/([^/]+)\//);
-      const chain = pool.chain || (route && route[1]);
-      if (chain) params.set('chain', chain);
-      params.set('pool', pool.pool);
-      // The page asks for 100 rows, which on a busy token is about two minutes.
-      // 500 is the server's cap and stretches the same single request to
-      // roughly twelve, which is what the wallet readout needs to say anything.
-      params.set('limit', String(TAPE_LIMIT));
+      const chain = (pool && pool.chain) || (route && route[1]);
+      const family = BBD.chain ? BBD.chain.family(chain, addr) : null;
 
-      // The oldest page never changes, so it is fetched once per token and
-      // then served from cache — including across reloads.
-      fetchLaunch(addr, params);
-      // Holder enrichment only runs when the readout that consumes it is on.
-      if (settings.scalpReadoutEnabled && settings.holderReadoutEnabled !== false) {
-        fetchHolders(addr, chain);
-      }
+      let trades;
+      if (family === 'svm') {
+        // /api/token/{addr}/trades answers 500 on Solana, so there is nothing
+        // to poll: the page's own api/2/token/trades request is tapped and the
+        // rows arrive through feed.js. Holder enrichment still works there.
+        if (settings.scalpReadoutEnabled && settings.holderReadoutEnabled !== false) {
+          fetchHolders(addr, chain);
+        }
+        trades = BBD.feed.svmTradesFor(addr);
+        // Nothing tapped yet — keep the last good price rather than blanking.
+        if (!trades.length) {
+          if (BBD.scalp) BBD.scalp.hide();
+          return;
+        }
+      } else {
+        // The page's own load request supplies this routing fact shortly after
+        // navigation; keep the last good price visible while waiting for it.
+        if (!pool || !pool.pool) {
+          if (BBD.scalp) BBD.scalp.hide();
+          return;
+        }
 
-      let response;
-      try {
-        response = await fetch(`/api/token/${addr}/trades?${params}`, {
-          credentials: 'same-origin'
-        });
-      } catch (err) {
-        return;
-      }
-      if (!response.ok || location.pathname !== path) return;
+        const params = new URLSearchParams();
+        if (chain) params.set('chain', chain);
+        params.set('pool', pool.pool);
+        // The page asks for 100 rows, which on a busy token is about two
+        // minutes. 500 is the server's cap and stretches the same single
+        // request to roughly twelve, which is what the wallet readout needs
+        // to say anything.
+        params.set('limit', String(TAPE_LIMIT));
 
-      let json;
-      try {
-        json = await response.json();
-      } catch (err) {
-        return;
+        // The oldest page never changes, so it is fetched once per token and
+        // then served from cache — including across reloads.
+        fetchLaunch(addr, params);
+        // Holder enrichment only runs when the readout that consumes it is on.
+        if (settings.scalpReadoutEnabled && settings.holderReadoutEnabled !== false) {
+          fetchHolders(addr, chain);
+        }
+
+        let response;
+        try {
+          response = await fetch(`/api/token/${addr}/trades?${params}`, {
+            credentials: 'same-origin'
+          });
+        } catch (err) {
+          return;
+        }
+        if (!response.ok || location.pathname !== path) return;
+
+        let json;
+        try {
+          json = await response.json();
+        } catch (err) {
+          return;
+        }
+        trades = (json && json.data) || [];
+        BBD.feed.notePrice(addr, trades);
+        // Same rows, kept instead of discarded: wallet-level questions need
+        // more history than one page carries, and this poll is where it
+        // accumulates.
+        BBD.feed.noteTrades(addr, trades);
       }
-      const trades = (json && json.data) || [];
-      BBD.feed.notePrice(addr, trades);
-      // Same rows, kept instead of discarded: wallet-level questions need more
-      // history than one page carries, and this poll is where it accumulates.
-      BBD.feed.noteTrades(addr, trades);
 
       if (settings.priceTickerEnabled) {
         const current = BBD.feed.tickFor(addr);

@@ -15,6 +15,10 @@ BBD.feed = (() => {
   const market = new Map();  // addr -> { liq, mcap, isLaunchpad, symbol, ts }
   const ticks = new Map();   // addr -> { priceUsd, mcapUsd, ts }
   const audit = new Map();   // addr -> { danger, critical, ownerRenounced, reasons, ts }
+  const security = new Map(); // addr -> Solana security block (tax, mint/freeze authority)
+  const deployers = new Map(); // creatorAddr -> { total, tokens: [...], ts }
+  const svmRaw = new Map();  // addr -> { rows: raw Mobula trade rows, ts }
+  const SVM_RAW_MAX = 500;   // one page is 100; keep a few for the change window
   const balances = new Map(); // positionKey -> validated held-position snapshot
   const pools = new Map();   // addr -> { pool, chain, ts }
   let balancesSeen = false;
@@ -30,26 +34,42 @@ BBD.feed = (() => {
     return base.startsWith('0x') ? base.toLowerCase() : base;
   };
 
-  const pct = (v) => {
+  // Number(null) is 0 and Number('') is 0, so a missing stat would read as a
+  // perfectly clean 0% — unknown must stay unknown, especially in the
+  // direction that looks safe.
+  const numeric = (v) => {
+    if (v === null || v === undefined || v === '' || typeof v === 'boolean') return null;
     const n = Number(v);
-    return Number.isFinite(n) && n >= 0 && n <= 100 ? n : null;
+    return Number.isFinite(n) ? n : null;
+  };
+  const pct = (v) => {
+    const n = numeric(v);
+    return n !== null && n >= 0 && n <= 100 ? n : null;
   };
   const count = (v) => {
-    const n = Number(v);
-    return Number.isFinite(n) && n >= 0 ? n : null;
+    const n = numeric(v);
+    return n !== null && n >= 0 ? n : null;
   };
   const usd = (v) => {
-    const n = Number(v);
-    return Number.isFinite(n) && n >= 0 ? n : null;
+    const n = numeric(v);
+    return n !== null && n >= 0 ? n : null;
   };
   // creatorAddress / token address share the EVM-lowercase, base58-preserve rule.
   const isAddr = (v) => typeof v === 'string' && /^(0x[a-fA-F0-9]{6,}|[1-9A-HJ-NP-Za-km-z]{20,})$/.test(v);
   const poolId = (v) =>
     typeof v === 'string' && /^[a-zA-Z0-9:_-]{1,200}$/.test(v) ? v : null;
+  // Canonicalize first: the same chain arrives as "sol", "solana", -1 or
+  // "solana:solana" depending on which backend answered, and a pool cached
+  // under one spelling must be found under the others.
+  // Validate strictly BEFORE canonicalizing: a malformed value must be
+  // rejected, never scrubbed into something that looks like a real chain.
+  // ":" is allowed on the way in only because Mobula reports "solana:solana".
   const chainId = (v) => {
     if (typeof v !== 'string' && !Number.isSafeInteger(v)) return null;
-    const chain = String(v).toLowerCase();
-    return /^[a-z0-9_-]{1,64}$/.test(chain) ? chain : null;
+    const raw = String(v).trim().toLowerCase();
+    if (!/^[a-z0-9:_-]{1,64}$/.test(raw)) return null;
+    const chain = BBD.canonicalChain(raw);
+    return chain && /^[a-z0-9_-]{1,64}$/.test(chain) ? chain : null;
   };
 
   // Dormant JSON tick adapter. The real swap socket turned out to be binary
@@ -220,6 +240,52 @@ BBD.feed = (() => {
   const TAPE_TTL_MS = 60 * 60 * 1000;
   const tapes = new Map(); // addr -> { rows, seen: Set<txHash>, ts }
 
+  // The two backends describe the same trade differently: basedbot's EVM tape
+  // uses snake_case with a UTC timestamp string and explicit is_* booleans,
+  // Mobula's Solana tape uses camelCase, an epoch-ms `date`, a `type` string
+  // and a `labels` array. Normalizing here means candles/cohort/dump/price all
+  // keep consuming one shape (docs/solana-support.md §2).
+  const hasLabel = (t, needle) => Array.isArray(t.labels) &&
+    t.labels.some((l) => typeof l === 'string' && l.toLowerCase().includes(needle));
+
+  const tradeRow = (t) => {
+    if (!t || typeof t !== 'object' || t.preconfirm === true) return null;
+    // tx hash is the only stable identity across overlapping poll pages.
+    if (typeof t.tx_hash === 'string' && t.tx_hash) {
+      const ts = BBD.parseTradeTimestamp(t.timestamp);
+      if (ts === null) return null;
+      return {
+        ts,
+        txHash: t.tx_hash,
+        trader: typeof t.trader_full === 'string' ? t.trader_full : '',
+        isBuy: t.is_buy === true,
+        volumeUsd: usd(t.volume_usd) || 0,
+        isPro: t.is_pro_trader === true,
+        isSniper: t.is_sniper === true
+      };
+    }
+    if (typeof t.transactionHash === 'string' && t.transactionHash) {
+      // `date` is epoch ms here, not the UTC string parseTradeTimestamp reads.
+      const ts = Number(t.date);
+      if (!Number.isFinite(ts) || ts <= 0) return null;
+      // Only "buy"/"sell" are decisive; an unknown operation must not silently
+      // read as a sell, which is what `!== 'buy'` would do.
+      const type = typeof t.type === 'string' ? t.type.toLowerCase() : '';
+      if (type !== 'buy' && type !== 'sell') return null;
+      return {
+        ts,
+        txHash: t.transactionHash,
+        trader: typeof t.swapSenderAddress === 'string' ? t.swapSenderAddress
+          : (typeof t.transactionSenderAddress === 'string' ? t.transactionSenderAddress : ''),
+        isBuy: type === 'buy',
+        volumeUsd: usd(t.baseTokenAmountUSD) || usd(t.quoteTokenAmountUSD) || 0,
+        isPro: hasLabel(t, 'protrader'),
+        isSniper: hasLabel(t, 'sniper')
+      };
+    }
+    return null;
+  };
+
   const noteTrades = (addr, trades) => {
     if (!isAddr(addr) || !Array.isArray(trades)) return;
     const key = normAddr(addr);
@@ -231,22 +297,10 @@ BBD.feed = (() => {
     tape.ts = Date.now();
 
     for (const t of trades) {
-      if (!t || typeof t !== 'object' || t.preconfirm === true) continue;
-      // tx_hash is the only stable identity across overlapping poll pages.
-      const txHash = typeof t.tx_hash === 'string' ? t.tx_hash : null;
-      if (!txHash || tape.seen.has(txHash)) continue;
-      const ts = BBD.parseTradeTimestamp(t.timestamp);
-      if (ts === null) continue;
-      tape.seen.add(txHash);
-      tape.rows.push({
-        ts,
-        txHash,
-        trader: typeof t.trader_full === 'string' ? t.trader_full : '',
-        isBuy: t.is_buy === true,
-        volumeUsd: usd(t.volume_usd) || 0,
-        isPro: t.is_pro_trader === true,
-        isSniper: t.is_sniper === true
-      });
+      const row = tradeRow(t);
+      if (!row || tape.seen.has(row.txHash)) continue;
+      tape.seen.add(row.txHash);
+      tape.rows.push(row);
     }
 
     const cutoff = tape.ts - TAPE_TTL_MS;
@@ -536,6 +590,252 @@ BBD.feed = (() => {
     prune(audit);
   };
 
+  // --- Solana (Mobula) adapters -------------------------------------------
+  // api/2/token/security is the Solana counterpart to BOTH metrics/batch and
+  // audit/batch. Its danger signals are different in kind: there is no owner to
+  // renounce and no hook to audit, but an SPL mint authority can dilute supply
+  // at will and a freeze authority can block the holder's sell outright — that
+  // is Solana's honeypot, and it is a fact, not a heuristic.
+  const bool = (v) => (v === true ? true : v === false ? false : null);
+  const evalSecurity = (s) => {
+    const mintable = bool(s.isMintable);
+    const freezable = bool(s.isFreezable);
+    const honeypot = bool(s.isHoneypot);
+    const blacklisted = bool(s.isBlacklisted);
+    const pausable = bool(s.transferPausable);
+    const reasons = [];
+    if (freezable === true) reasons.push('freeze authority active — the mint can block your sell');
+    if (honeypot === true) reasons.push('flagged as a honeypot');
+    if (mintable === true) reasons.push('mint authority active — supply can be diluted');
+    if (blacklisted === true) reasons.push('address blacklisting is enabled');
+    if (pausable === true) reasons.push('transfers can be paused');
+    // Trapped funds are critical; dilution is dangerous but still exitable.
+    const critical = freezable === true || honeypot === true ||
+      blacklisted === true || pausable === true;
+    return {
+      danger: critical || mintable === true,
+      critical,
+      ownerRenounced: mintable === false && freezable === false,
+      reasons,
+      ts: Date.now()
+    };
+  };
+
+  const takeSecurity = (payload) => {
+    const rows = Array.isArray(payload) ? payload : [payload];
+    for (const s of rows) {
+      if (!s || typeof s !== 'object' || !isAddr(s.address)) continue;
+      const addr = normAddr(s.address);
+      audit.set(addr, evalSecurity(s));
+      security.set(addr, {
+        top10: pct(s.top10HoldingsPercentage),
+        burned: pct(s.burnedHoldingsPercentage),
+        buyTax: pct(s.buyFeePercentage),
+        sellTax: pct(s.sellFeePercentage),
+        transferTax: pct(s.transferFeePercentage),
+        mintable: bool(s.isMintable),
+        freezable: bool(s.isFreezable),
+        honeypot: bool(s.isHoneypot),
+        isLaunchpad: s.isLaunchpadToken === true,
+        ts: Date.now()
+      });
+    }
+    prune(audit);
+    prune(security);
+  };
+
+  // A launch-time "website" on a bonding-curve launchpad is whatever the dev
+  // typed, and it is routinely an Instagram reel or a tweet. Mapping that to
+  // "Website" would hand every meme the never-auto-hide pass UTILITY_TITLES
+  // grants, gutting the filter — so a social host keeps its own (zero-weight)
+  // label and only a real domain counts as a website.
+  const SOCIAL_HOSTS = Object.freeze([
+    ['x.com', 'X'], ['twitter.com', 'X'], ['t.me', 'Telegram'],
+    ['telegram.me', 'Telegram'], ['instagram.com', 'Instagram'],
+    ['facebook.com', 'Facebook'], ['reddit.com', 'Reddit'],
+    ['tiktok.com', 'Instagram'], ['youtube.com', 'YouTube'], ['youtu.be', 'YouTube'],
+    ['discord.gg', 'Discord'], ['discord.com', 'Discord'],
+    ['github.com', 'GitHub'], ['medium.com', 'Medium']
+  ]);
+
+  const titleForUrl = (url, fallback) => {
+    if (typeof url !== 'string' || !url) return null;
+    let host;
+    try {
+      host = new URL(url).hostname.toLowerCase().replace(/^www\./, '');
+    } catch (err) {
+      return null;
+    }
+    const hit = SOCIAL_HOSTS.find(([h]) => host === h || host.endsWith('.' + h));
+    if (hit) return hit[1];
+    // pump.fun/bags/etc. are the launchpad itself, never a project website.
+    if (/^(pump\.fun|bags\.fm|believe\.app|moonshot\.money)$/.test(host)) return null;
+    return fallback;
+  };
+
+  const takeSocials = (addr, socials) => {
+    if (!socials || typeof socials !== 'object') return;
+    const list = [];
+    const add = (t) => { if (t && !list.includes(t)) list.push(t); };
+    add(titleForUrl(socials.website, 'Website'));
+    add(titleForUrl(socials.twitter, 'X'));
+    add(titleForUrl(socials.telegram, 'Telegram'));
+    add(titleForUrl(socials.discord, 'Discord'));
+    const others = socials.others && typeof socials.others === 'object' ? socials.others : {};
+    for (const value of Object.values(others)) add(titleForUrl(value, 'Website'));
+    if (list.length) titles.set(normAddr(addr), { list, ts: Date.now() });
+  };
+
+  // api/2/pulse — the Solana feed list. It is the counterpart to BOTH
+  // /api/tokens and /api/tokens/metrics/batch: every card stat, the market,
+  // the pool, the socials and the deployer arrive in one payload, in three
+  // buckets (new / bonding / bonded). Percentages are already 0-100.
+  const takePulse = (payload) => {
+    if (!payload || typeof payload !== 'object') return;
+    for (const bucket of Object.values(payload)) {
+      const rows = bucket && Array.isArray(bucket.data) ? bucket.data : null;
+      if (!rows) continue;
+      for (const t of rows) {
+        if (!t || typeof t !== 'object' || !isAddr(t.address)) continue;
+        const addr = normAddr(t.address);
+
+        const entry = {
+          holders: count(t.holdersCount),
+          pro: count(t.proTradersCount),
+          top10: pct(t.top10Holdings),
+          dev: pct(t.devHoldings),
+          snipers: pct(t.snipersHoldings),
+          bundlers: pct(t.bundlersHoldings),
+          insiders: pct(t.insidersHoldings),
+          paid: t.dexscreenerAdPaid === true,
+          ts: Date.now()
+        };
+        // Same completeness bar as takeMetrics: partial stats must not gate
+        // safety checks, so an incomplete block is left for the DOM parser.
+        const complete = entry.holders !== null && entry.pro !== null &&
+          [entry.top10, entry.dev, entry.snipers, entry.bundlers, entry.insiders]
+            .every((v) => v !== null);
+        if (complete) stats.set(addr, entry);
+
+        const liq = usd(t.liquidity) ?? usd(t.approximateReserveUSD);
+        const mcap = usd(t.marketCap) ?? usd(t.marketCapDiluted);
+        if (liq !== null || mcap !== null) {
+          market.set(addr, {
+            liq, mcap,
+            // Every bonding-curve token is a launchpad token; bondingPercentage
+            // is only present while that curve exists.
+            isLaunchpad: typeof t.bondingPercentage === 'number' || t.bonded === true,
+            symbol: typeof t.symbol === 'string' ? t.symbol : '',
+            ts: Date.now()
+          });
+        }
+
+        // The deployer is the creator guard's whole input, and here it comes
+        // straight off the feed — no per-token request needed.
+        if (isAddr(t.deployer)) creator.set(addr, normAddr(t.deployer));
+        if (t.poolAddress) rememberPool(t.address, t.poolAddress, t.chainId, false);
+        takeSocials(t.address, t.socials);
+      }
+    }
+    prune(stats);
+    prune(market);
+    prune(creator);
+    prune(titles);
+  };
+
+  // api/2/wallet/deployer — every token the creator of the open token has
+  // launched, with pagination.total as the authoritative launch count. The tap
+  // cannot see the POST body, so the deployer is resolved from the token the
+  // page is showing.
+  const takeDeployer = (payload) => {
+    if (!payload || typeof payload !== 'object') return;
+    const pageAddr = BBD.tokenAddrFromHref(location.pathname);
+    const creatorAddr = pageAddr ? creatorFor(pageAddr) : null;
+    if (!creatorAddr) return;
+    const rows = Array.isArray(payload.data) ? payload.data : [];
+    const total = count(payload.pagination && payload.pagination.total);
+    const tokens = [];
+    for (const row of rows) {
+      const tk = row && row.token;
+      if (!tk || typeof tk !== 'object' || !isAddr(tk.address)) continue;
+      tokens.push({
+        addr: normAddr(tk.address),
+        symbol: typeof tk.symbol === 'string' ? tk.symbol : '',
+        mcap: usd(tk.marketCapUSD) ?? usd(tk.marketCapDiluted),
+        liq: usd(tk.approximateReserveUSD)
+      });
+    }
+    // The reported total counts launches this page never listed; keep it
+    // separate from the rows so the rug check still only judges what it saw.
+    deployers.set(creatorAddr, { total, tokens, ts: Date.now() });
+    prune(deployers);
+  };
+
+  // api/2/token/trades — the Solana tape. The EVM REST tape returns 500 on
+  // Solana, so this tap is the only live trade source there. Every row names
+  // its own token in baseToken.address, so one response may legitimately cover
+  // more than one token and needs no request body to be attributed.
+  const takeSvmTrades = (rows) => {
+    if (!Array.isArray(rows)) return;
+    const byToken = new Map();
+    for (const t of rows) {
+      const base = t && t.baseToken;
+      const addr = base && typeof base === 'object' && isAddr(base.address)
+        ? normAddr(base.address) : null;
+      if (!addr) continue;
+      if (!byToken.has(addr)) byToken.set(addr, []);
+      byToken.get(addr).push(t);
+    }
+    for (const [addr, trades] of byToken) {
+      noteTrades(addr, trades);
+      // The tape doubles as the price feed: each row carries the executed price
+      // and market cap, which is what the live pill needs and what the binary
+      // swap socket (inside a Web Worker) will not give us.
+      let bestTs = -Infinity;
+      let tick = null;
+      for (const t of trades) {
+        const ts = Number(t.date);
+        if (!Number.isFinite(ts) || ts <= bestTs) continue;
+        const priceUsd = usd(t.baseTokenPriceUSD);
+        if (priceUsd === null || priceUsd <= 0) continue;
+        bestTs = ts;
+        tick = { priceUsd, mcapUsd: usd(t.baseTokenMarketCapUSD), ts: Date.now() };
+      }
+      if (tick) ticks.set(addr, tick);
+      // candles.build/flow read raw API rows (they need the per-trade price,
+      // which the normalized tape row does not carry). On EVM the poll hands
+      // them the fetch response directly; on Solana there is no fetch, so the
+      // tapped page is retained here for the readouts to work on.
+      const prior = svmRaw.get(addr);
+      const merged = prior ? prior.rows.concat(trades) : trades.slice();
+      const seen = new Set();
+      const deduped = [];
+      for (let i = merged.length - 1; i >= 0 && deduped.length < SVM_RAW_MAX; i--) {
+        const hash = merged[i] && merged[i].transactionHash;
+        if (typeof hash !== 'string' || seen.has(hash)) continue;
+        seen.add(hash);
+        deduped.push(merged[i]);
+      }
+      svmRaw.set(addr, { rows: deduped.reverse(), ts: Date.now() });
+    }
+    prune(ticks);
+    prune(svmRaw);
+  };
+
+  // api/v1/monitor/{addr}?chain=-1 — the only place a Solana token page exposes
+  // its pool id, because it never issues the /api/token/{addr}/trades request
+  // the EVM pool tap listens for.
+  const takeMonitor = (data) => {
+    if (!data || typeof data !== 'object') return;
+    const info = data.poolInfo && typeof data.poolInfo === 'object' ? data.poolInfo : null;
+    const token = data.tokenInfo && data.tokenInfo.token;
+    const addr = token && isAddr(token.address) ? token.address
+      : (info && info.token && isAddr(info.token.address) ? info.token.address : null);
+    if (!addr || !info) return;
+    const chain = data.chain === undefined || data.chain === null ? info.chainId : data.chain;
+    rememberPool(addr, info.address, chain, false);
+  };
+
   const rememberPool = (addr, poolRaw, chainRaw, replace) => {
     if (!isAddr(addr)) return;
     const pool = poolId(poolRaw);
@@ -619,6 +919,11 @@ BBD.feed = (() => {
     else if (msg.kind === 'balances') takeBalances(msg.data);
     else if (msg.kind === 'tick') takeTick(msg.data);
     else if (msg.kind === 'pool') takePool(msg.data);
+    else if (msg.kind === 'security') takeSecurity(msg.data);
+    else if (msg.kind === 'monitor') takeMonitor(msg.data);
+    else if (msg.kind === 'svmtrades') takeSvmTrades(msg.data);
+    else if (msg.kind === 'pulse') takePulse(msg.data);
+    else if (msg.kind === 'deployer') takeDeployer(msg.data);
   });
   // The load-time batches fired before this listener existed.
   window.postMessage({ __bbd: 'replay-request' }, location.origin);
@@ -639,6 +944,15 @@ BBD.feed = (() => {
   const creatorFor = (addr) => (addr && creator.get(normAddr(addr))) || null;
   const marketFor = (addr) => (addr && market.get(normAddr(addr))) || null;
   const auditFor = (addr) => (addr && audit.get(normAddr(addr))) || null;
+  // Solana security block: the tax and the mint/freeze authorities, neither of
+  // which appears in the token page's Token Info panel.
+  const securityFor = (addr) => (addr && security.get(normAddr(addr))) || null;
+  // Raw Solana tape rows, in the shape candles.build/flow expect.
+  const svmTradesFor = (addr) => (addr && svmRaw.get(normAddr(addr))?.rows) || [];
+  // The deployer's full launch history, straight from the source rather than
+  // accumulated by observation.
+  const deployerFor = (creatorAddr) =>
+    (creatorAddr && deployers.get(normAddr(creatorAddr))) || null;
   const priceOf = (sym) => (sym && prices[sym]) || null;
   const ethPrice = () => prices.ETH || null;
   const tickFor = (addr) => {
@@ -658,7 +972,8 @@ BBD.feed = (() => {
   const poolFor = (addr) => (addr && pools.get(normAddr(addr))) || null;
 
   return {
-    statsFor, titlesFor, creatorFor, marketFor, auditFor, priceOf, ethPrice,
+    statsFor, titlesFor, creatorFor, marketFor, auditFor, securityFor,
+    svmTradesFor, deployerFor, priceOf, ethPrice,
     tickFor, adaptTick, notePrice, noteTrades, tapeFor, hydrateTapes, flushTapes,
     noteLaunch, launchFor, hasLaunch,
     noteHolders, holdersFor, holdersAgeMs,

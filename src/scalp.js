@@ -276,10 +276,15 @@ BBD.scalp = (() => {
       // or, in the funder case, simply absent for this token.
       const holdersLine = document.createElement('div');
       holdersLine.className = 'bbd-scalp-signals';
+      // The pool holds most of a bonding curve's supply and is not a holder;
+      // the API usually labels its row, and this is the fallback.
+      const poolInfo = BBD.feed.poolFor(addr);
+      const poolKey = (poolInfo && poolInfo.pool) || null;
       const book = BBD.holders && settings && settings.holderReadoutEnabled !== false
         ? BBD.holders.analyze(BBD.feed.holdersFor(addr), {
           minHolders: settings.holderMinCount,
-          minClusterWallets: settings.holderClusterMinWallets
+          minClusterWallets: settings.holderClusterMinWallets,
+          poolAddress: poolKey
         })
         : null;
       if (book && book.enough) {
@@ -305,7 +310,8 @@ BBD.scalp = (() => {
           BBD.feed.holdersFor(addr), BBD.feed.tapeFor(addr), {
             topN: settings.holderTrackTopN,
             windowMs: (settings.holderTrackWindowSec || 300) * 1000,
-            now: Date.now()
+            now: Date.now(),
+            poolAddress: poolKey
           }
         );
         if (track.enough && track.sellers > 0) {

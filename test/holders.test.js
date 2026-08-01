@@ -198,3 +198,72 @@ test('trackFlow returns not-enough without holders or tape', () => {
   }
   assert.equal(H().TRACK_DEFAULTS.topN, 10);
 });
+
+// --- the bonding-curve pool is not a holder --------------------------------
+// On a Solana launchpad the pool sits at rank 1 holding the unsold supply:
+// 100% before anyone has bought, 85% early on. Counting it makes every fresh
+// launch read as extreme concentration. Row shape captured live 2026-08-01
+// from /api/token/{addr}/holders?chain=sol — see docs/solana-support.md §2.
+const POOL = 'WGTogYpHuiBHctPEX5zfwLtSx2sUkxSp4T2ePEKDu8c';
+const poolRow = (over) => ({
+  rank: 1,
+  address: POOL,
+  percentage: 85.31606229716606,
+  total_pnl_usd: 0,
+  labels: ['liquidityPool'],
+  platform_name: 'PumpFun',
+  ...over
+});
+
+test('the labelled pool row is excluded from the holder book', () => {
+  const rows = [poolRow(), ...book({ count: 25 })];
+  const withPool = H().analyze(rows, { minHolders: 20 });
+  assert.equal(withPool.holderCount, 25, 'the pool must not be counted as a holder');
+  assert.equal(withPool.enough, true);
+});
+
+test('a token whose only holder is the pool reports nothing', () => {
+  // Observed live: a fresh launch returns exactly one row, the pool at 100%.
+  const only = H().analyze([poolRow({ percentage: 100 })], { minHolders: 20 });
+  assert.equal(only.holderCount, 0);
+  assert.equal(only.enough, false);
+  // Silence is the honest answer here, not "1 holder owning everything".
+  assert.equal(only.inProfitPct, null);
+});
+
+test('the known pool address is a fallback when the label is missing', () => {
+  const rows = [poolRow({ labels: [] }), ...book({ count: 25 })];
+  assert.equal(H().analyze(rows, { minHolders: 20, poolAddress: POOL }).holderCount, 25);
+  // Without either signal the row is a holder like any other.
+  assert.equal(H().analyze(rows, { minHolders: 20 }).holderCount, 26);
+});
+
+test('the pool never occupies a slot in the tracked top-N', () => {
+  const now = 1785620000000;
+  const holderRows = [
+    poolRow(),
+    { rank: 2, address: 'HaQ83RwhoJPnQZfeYAsQGL1YvTV6ptjSLE8JAFmMhCVA', percentage: 6 },
+    { rank: 3, address: '6XVMi7VUnDGuvfhbYnH7CzsDgFqXH1TfnBAtnbEgWfBk', percentage: 4 }
+  ];
+  const tape = [
+    { ts: now - 1000, trader: POOL, isBuy: false, volumeUsd: 900 },
+    { ts: now - 1000, trader: 'HaQ83RwhoJPnQZfeYAsQGL1YvTV6ptjSLE8JAFmMhCVA', isBuy: false, volumeUsd: 50 }
+  ];
+  const track = H().trackFlow(holderRows, tape, { topN: 2, now, windowMs: 60000 });
+  // topN=2 must reach the two real holders, and the pool's own leg of a swap
+  // must never be reported as a big holder selling.
+  assert.equal(track.tracked, 2);
+  assert.equal(track.sellers, 1);
+  assert.equal(track.soldUsd, 50);
+});
+
+test('a funder cluster is measured without the pool inflating it', () => {
+  const shared = funder(1);
+  const rows = [
+    poolRow({ funding_source_address_full: shared }),
+    ...book({ count: 25, funders: [shared, shared, shared] })
+  ];
+  const out = H().analyze(rows, { minHolders: 20, minClusterWallets: 3 });
+  assert.equal(out.topClusterWallets, 3); // not 4
+  assert.equal(out.topClusterPct, 3);     // not 88.3
+});

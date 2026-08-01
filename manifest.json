@@ -23,6 +23,7 @@
       "matches": ["https://basedbot.app/*"],
       "js": [
         "src/constants.js",
+        "src/chain.js",
         "src/store.js",
         "src/drag.js",
         "src/feed.js",

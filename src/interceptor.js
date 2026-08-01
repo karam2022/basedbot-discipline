@@ -8,13 +8,40 @@
 'use strict';
 
 (() => {
+  // BasedBot serves EVM chains from basedbot.app/api/* and Solana from
+  // basedbot-api.mobula.io/api/2/* — a different backend with different
+  // payload shapes, not just different values. Tapping only the first set is
+  // why the feed cache was empty on Solana (docs/solana-support.md §2).
+  const MOBULA = 'basedbot-api.mobula.io';
   const WATCHED = [
     [/\/api\/tokens\/metrics\/batch$/, 'metrics'],
     [/\/api\/tokens\/metadata(\/batch)?$/, 'metadata'],
     [/\/api\/tokens$/, 'list'],        // feed list: liquidity_usd, market_cap_usd per token
     [/\/api\/prices$/, 'prices'],      // { success, prices: { ETH: number, ... } }
     [/\/api\/audit\/batch$/, 'audit'], // streamed audit objects (contract + hook safety)
-    [/\/api\/v1\/balances$/, 'balances'] // wallet holdings + unrealized PnL per token
+    [/\/api\/v1\/balances$/, 'balances'], // wallet holdings + unrealized PnL per token
+    // --- Solana (Mobula) counterparts ---
+    // security replaces BOTH metrics/batch and audit/batch: holder
+    // concentration plus isMintable/isFreezable, the SPL authorities that are
+    // Solana's honeypot switch.
+    [/^\/api\/2\/token\/security$/, 'security', MOBULA],
+    // The Solana tape. /api/token/{a}/trades answers 500 on Solana, so this
+    // tap is the only live trade source there.
+    [/^\/api\/2\/token\/trades$/, 'svmtrades', MOBULA],
+    // The Solana feed list: every card stat, the market, the pool, the socials
+    // and the deployer in one payload (new / bonding / bonded buckets).
+    [/^\/api\/2\/pulse$/, 'pulse', MOBULA],
+    // Every token the open token's creator has launched, with the authoritative
+    // total in pagination.total.
+    [/^\/api\/2\/wallet\/deployer$/, 'deployer', MOBULA],
+    // Per-token positions + poolInfo. The Solana token page has no tappable
+    // /api/token/{a}/trades request, so this is where the pool id comes from.
+    [/^\/api\/v1\/monitor\/[^/]+$/, 'monitor', 'api.basedbot.app']
+    // Not tapped yet — api/2/pulse (feed list), api/2/token/details (socials)
+    // and api/2/wallet/deployer (creator history) all exist on Solana, but
+    // their payload shapes are unverified. They stay out of WATCHED until an
+    // adapter can consume them: every kind added here competes for the
+    // 40-slot replay buffer that exists to preserve the load-time batches.
   ];
 
   // Chain-specific stream names can change; the BasedBot + Mobula hostname
@@ -53,6 +80,64 @@
       }
     }
     return out;
+  };
+
+  // One /api/2/pulse response is three buckets of 100 tokens carrying ~130
+  // fields each — several megabytes of trending scores and volume windows the
+  // extension never reads. Structured-cloning that through postMessage and
+  // holding it in the replay buffer would cost far more than the ~15 fields
+  // that matter, so it is projected down here, in the world that already has
+  // the object.
+  const PULSE_FIELDS = [
+    'address', 'chainId', 'symbol', 'name', 'deployer', 'poolAddress',
+    'holdersCount', 'proTradersCount', 'top10Holdings', 'devHoldings',
+    'snipersHoldings', 'bundlersHoldings', 'insidersHoldings',
+    'dexscreenerAdPaid', 'liquidity', 'approximateReserveUSD', 'marketCap',
+    'marketCapDiluted', 'bondingPercentage', 'bonded', 'socials'
+  ];
+
+  const slimPulse = (json) => {
+    if (!json || typeof json !== 'object') return null;
+    const out = {};
+    for (const [bucket, value] of Object.entries(json)) {
+      const rows = value && Array.isArray(value.data) ? value.data : null;
+      if (!rows) continue;
+      out[bucket] = {
+        data: rows.map((row) => {
+          if (!row || typeof row !== 'object') return null;
+          const slim = {};
+          for (const field of PULSE_FIELDS) {
+            if (row[field] !== undefined) slim[field] = row[field];
+          }
+          return slim;
+        }).filter(Boolean)
+      };
+    }
+    return Object.keys(out).length ? out : null;
+  };
+
+  // Same reasoning for the deployer's 50 positions: only the token identity
+  // and the market that decides "rugged" are read.
+  const slimDeployer = (json) => {
+    if (!json || typeof json !== 'object') return null;
+    const rows = Array.isArray(json.data) ? json.data : [];
+    const total = json.pagination && json.pagination.total;
+    return {
+      pagination: { total: typeof total === 'number' ? total : null },
+      data: rows.map((row) => {
+        const tk = row && row.token;
+        if (!tk || typeof tk !== 'object') return null;
+        return {
+          token: {
+            address: tk.address,
+            symbol: tk.symbol,
+            marketCapUSD: tk.marketCapUSD,
+            marketCapDiluted: tk.marketCapDiluted,
+            approximateReserveUSD: tk.approximateReserveUSD
+          }
+        };
+      }).filter(Boolean)
+    };
   };
 
   // The ISOLATED-world listener attaches at document_idle, long after the
@@ -104,7 +189,9 @@
         const validChain = typeof chain === 'string' && /^[a-zA-Z0-9_-]{1,64}$/.test(chain);
         if (validPool && validChain) post('pool', { addr: trades[1], pool, chain });
       }
-      const hit = WATCHED.find(([re]) => re.test(path));
+      const host = parsedUrl.hostname.toLowerCase();
+      const hit = WATCHED.find(([re, , wantHost]) =>
+        re.test(path) && (!wantHost || host === wantHost));
       if (hit) {
         const kind = hit[1];
         if (kind === 'audit') {
@@ -119,8 +206,12 @@
           promise
             .then((resp) => resp.clone().json())
             .then((json) => {
-              // prices carries { prices: {...} }; the rest carry { data: ... }.
-              const payload = kind === 'prices' ? (json && json.prices) : (json && json.data);
+              // prices carries { prices: {...} }; pulse is bucketed at the top
+              // level; the rest carry { data: ... }.
+              const payload = kind === 'prices' ? (json && json.prices)
+                : kind === 'pulse' ? slimPulse(json)
+                  : kind === 'deployer' ? slimDeployer(json)
+                    : (json && json.data);
               if (payload && typeof payload === 'object') post(kind, payload);
             })
             .catch(() => {}); // the page's own consumer surfaces real errors
