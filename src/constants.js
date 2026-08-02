@@ -27,6 +27,12 @@ BBD.DEFAULT_SETTINGS = Object.freeze({
   // The Paperwork: on a new position, prompt for a per-token dismount (TP/stop)
   // filed BEFORE the ride; the banner then enforces the filed plan.
   planPromptEnabled: true,
+  // One-click ⚡ auto plan: TP +30 (every tracked trade that touched +30
+  // finished green) and stop −22. autoPlanAll files it silently on every new
+  // position — zero clicks for high-frequency days.
+  autoPlanTpPct: 30,
+  autoPlanStopPct: 22,
+  autoPlanAll: false,
   // Structure break: after a climax of at least structureArmPct, a failed push
   // that sets a lower high and rolls over fires a dismount alert.
   structureBreakEnabled: true,

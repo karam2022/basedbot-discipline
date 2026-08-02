@@ -3,7 +3,7 @@ vps-watcher/config.json
 vps-watcher/seen.json
 .DS_Store
 verbesserung.md
-_preview.html
+dev-preview.html
 test/paper.test.js
 
 # private strategy backtest — never ship

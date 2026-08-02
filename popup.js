@@ -11,6 +11,9 @@ const DEFAULTS = {
   soundEnabled: true,
   soundVolumePct: 40,
   planPromptEnabled: true,
+  autoPlanTpPct: 30,
+  autoPlanStopPct: 22,
+  autoPlanAll: false,
   structureBreakEnabled: true,
   structureArmPct: 30,
   thresholdPct: 20,
@@ -95,6 +98,7 @@ const TOGGLES = {
     ['notifyEnabled', 'Chrome notifications', 'Desktop ping when a held position crosses the threshold'],
     ['soundEnabled', '🔊 Sound alerts', 'A rising chime for take-profit, a soft low tone for warnings'],
     ['planPromptEnabled', '✍️ Dismount plans', 'New positions prompt for a per-token TP/stop, filed before the ride'],
+    ['autoPlanAll', '⚡ Auto-file every new position', 'Skip the card entirely — every buy gets the ⚡ plan automatically'],
     ['structureBreakEnabled', '📉 Structure-break alert', 'First lower high after a climax — the dismount trigger']
   ],
   journalToggles: [
@@ -135,7 +139,9 @@ const NUMBERS = {
     ['stopLossPct', 'Stop-loss at down', 1, 100, '%'],
     ['peakGivebackPct', 'Peak-giveback after', 1, 500, 'pts'],
     ['soundVolumePct', 'Sound volume', 0, 100, '%'],
-    ['structureArmPct', 'Structure arms after climax of', 1, 1000, '%']
+    ['structureArmPct', 'Structure arms after climax of', 1, 1000, '%'],
+    ['autoPlanTpPct', '⚡ Auto-plan take-profit', 1, 1000, '%'],
+    ['autoPlanStopPct', '⚡ Auto-plan stop', 1, 100, '%']
   ],
   creatorFields: [
     ['creatorMaxLaunches', 'Flag creator after N launches', 1, 100, ''],

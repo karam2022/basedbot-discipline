@@ -403,3 +403,9 @@ a.bbd-banner-msg:hover {
 /* ---- Structure-break row (src/structure.js) ---------------------------- */
 .bbd-banner-row-structure { background: #3a1f5c; }
 .bbd-banner-row-structure .bbd-banner-msg { color: #e8ddfa; }
+.bbd-plan-auto {
+  background: #8a6d1f; color: #fff; border: none; padding: 4px 10px;
+  font-weight: 700; cursor: pointer; font-size: 12px;
+}
+.bbd-plan-auto:hover { background: #a5841f; }
+.bbd-plan-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; }

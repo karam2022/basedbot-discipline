@@ -54,25 +54,35 @@
     }
   };
 
-  // Chrome may keep a fresh AudioContext suspended until the user interacts
-  // with the page. Trading pages get constant interaction, so retry the sound
-  // once on the next click/keypress instead of dropping it.
-  let retryArmed = false;
+  // Chrome forbids audio before the page has seen a user gesture, and even
+  // attempting resume() logs an error to the extension console. So: never
+  // touch the AudioContext pre-gesture — queue the sound and deliver it on
+  // the first interaction instead (trading pages get one within seconds).
+  const hadGesture = () =>
+    Boolean(globalThis.navigator && navigator.userActivation && navigator.userActivation.hasBeenActive);
+  let queued = null;   // last sound requested before the first gesture
+  let armed = false;
+  const deliverQueued = () => {
+    const q = queued;
+    queued = null;
+    armed = false;
+    if (q) play(q.kind, q.volumePct);
+  };
   const play = (kind, volumePct) => {
     try {
+      if (!hadGesture()) {
+        queued = { kind, volumePct }; // keep only the newest — one catch-up chime is plenty
+        if (!armed) {
+          armed = true;
+          globalThis.addEventListener('pointerdown', deliverQueued, { once: true });
+          globalThis.addEventListener('keydown', deliverQueued, { once: true });
+        }
+        return;
+      }
       const c = ensureCtx();
       if (c.state === 'suspended') {
-        c.resume().catch(() => {});
-        if (c.state === 'suspended' && !retryArmed) {
-          retryArmed = true;
-          const once = () => {
-            retryArmed = false;
-            c.resume().then(() => schedule(kind, volumePct)).catch(() => {});
-          };
-          globalThis.addEventListener('pointerdown', once, { once: true });
-          globalThis.addEventListener('keydown', once, { once: true });
-          return;
-        }
+        c.resume().then(() => schedule(kind, volumePct)).catch(() => {});
+        return;
       }
       schedule(kind, volumePct);
     } catch (err) {

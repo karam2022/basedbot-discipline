@@ -19,6 +19,15 @@ BBD.plans = (() => {
     return Number.isFinite(n) && n > 0 && n <= 1000 ? n : fb;
   };
 
+  // The ⚡ plan: tracked best-practice numbers, editable in the popup.
+  const fileAuto = (positionKey, settings) =>
+    BBD.store.mergeEntry(BBD.KEYS.plans, positionKey, {
+      tpPct: settings.autoPlanTpPct,
+      stopPct: settings.autoPlanStopPct,
+      auto: true,
+      ts: Date.now()
+    });
+
   const renderRow = (pos, settings) => {
     const row = document.createElement('div');
     row.className = 'bbd-plan-row';
@@ -42,6 +51,19 @@ BBD.plans = (() => {
     };
     const tp = mkInput(settings.thresholdPct, 'TP +%');
     const stop = mkInput(settings.stopLossPct, 'stop −%');
+
+    // ⚡ one-click best-practice plan: +30 came from tracked trades (every one
+    // that touched +30% finished green); the numbers are editable in the popup.
+    const auto = document.createElement('button');
+    auto.type = 'button';
+    auto.className = 'bbd-plan-auto';
+    auto.textContent = `⚡ +${settings.autoPlanTpPct}/−${settings.autoPlanStopPct}`;
+    auto.title = 'File the auto plan for this position — one click, done';
+    auto.addEventListener('click', async () => {
+      await fileAuto(pos.positionKey, settings);
+      BBD.plans.tick();
+      BBD.banner.tick();
+    });
 
     const file = document.createElement('button');
     file.type = 'button';
@@ -77,7 +99,22 @@ BBD.plans = (() => {
     card.id = CARD_ID;
     const head = document.createElement('div');
     head.className = 'bbd-plan-head';
-    head.textContent = '✍️ New position — write your dismount before the ride';
+    const headText = document.createElement('span');
+    headText.textContent = '✍️ New position — write your dismount before the ride';
+    head.append(headText);
+    if (unplanned.length > 1) {
+      const all = document.createElement('button');
+      all.type = 'button';
+      all.className = 'bbd-plan-auto';
+      all.textContent = `⚡ file all ${unplanned.length}`;
+      all.title = `Auto plan (+${settings.autoPlanTpPct}/−${settings.autoPlanStopPct}) for every unplanned position`;
+      all.addEventListener('click', async () => {
+        for (const p of unplanned) await fileAuto(p.positionKey, settings);
+        BBD.plans.tick();
+        BBD.banner.tick();
+      });
+      head.append(all);
+    }
     card.append(head);
     unplanned.slice(0, MAX_ROWS).forEach((p) => card.append(renderRow(p, settings)));
     if (unplanned.length > MAX_ROWS) {
@@ -108,6 +145,14 @@ BBD.plans = (() => {
         .filter((p) => typeof p.pct === 'number' && !plans[p.positionKey])
         .filter((p) => typeof p.sourceTs === 'number' && Date.now() - p.sourceTs <= BBD.STALE_MS);
       if (!unplanned.length) { remove(); return; }
+      // Zero-click mode for 20-buys-a-day sessions: every new position gets the
+      // ⚡ plan filed automatically, no card shown.
+      if (settings.autoPlanAll) {
+        for (const p of unplanned) await fileAuto(p.positionKey, settings);
+        remove();
+        BBD.banner.tick();
+        return;
+      }
       render(unplanned, settings);
     } catch (err) {
       console.warn('[bbd] plans tick failed', err);
