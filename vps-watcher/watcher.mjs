@@ -120,6 +120,31 @@ const rpcCall = async (url, method, params) => {
   return j.result;
 };
 
+// The tokens a hook's pools trade. Quote currencies (WETH/USDC…) appear in
+// most of a hook's pools — frequency-filter them out so what remains are the
+// project tokens. Names resolve through basedbot's own metadata API, and every
+// resolved token links straight into basedbot's token page.
+const describeHookTokens = async (chain, h) => {
+  try {
+    const tokens = (h.tokens || []).slice(0, 6);
+    if (!tokens.length) return '';
+    const counts = {};
+    for (const t of tokens) counts[t] = (counts[t] || 0) + 1;
+    const projects = tokens.filter((t) => h.pools < 3 || counts[t] <= Math.ceil(h.pools * 0.6));
+    const pick = (projects.length ? projects : tokens).slice(0, 3);
+    const meta = await fetchMetadata(chain, pick).catch(() => ({}));
+    const lines = [];
+    for (const a of pick) {
+      const m = meta[a.toLowerCase()];
+      const sym = m && (m.symbol || m.name);
+      lines.push(sym
+        ? `· ${String(sym).slice(0, 18)} — https://basedbot.app/token/${chain}/${a}`
+        : `· ${a.slice(0, 10)}… — https://basedbot.app/token/${chain}/${a}`);
+    }
+    return lines.join('\n');
+  } catch (e) { return ''; }
+};
+
 const onchainHooksScan = async () => {
   if (!HOOKS_ENABLED) return;
   const reg = loadJson(HOOK_REGISTRY_PATH, {});
@@ -139,9 +164,17 @@ const onchainHooksScan = async () => {
         for (const l of logs) {
           const hook = ('0x' + l.data.slice(2 + 2 * 64 + 24, 2 + 3 * 64)).toLowerCase();
           if (hook === ZERO_HOOK) continue;
-          const h = state.hooks[hook] || { pools: 0, firstTs: Date.now() };
+          const h = state.hooks[hook] || { pools: 0, firstTs: Date.now(), tokens: [] };
           h.pools += 1;
           h.lastTs = Date.now();
+          // Initialize topics: [sig, poolId, currency0, currency1] — the pool's
+          // tokens. 0x0 is native ETH; the rest are the projects on this hook.
+          h.tokens = h.tokens || [];
+          for (const t of [l.topics[2], l.topics[3]]) {
+            const addr = ('0x' + (t || '').slice(26)).toLowerCase();
+            if (addr.length !== 42 || /^0x0{40}$/.test(addr)) continue;
+            h.tokens = [addr, ...h.tokens.filter((x) => x !== addr)].slice(0, 8);
+          }
           state.hooks[hook] = h;
         }
         from = to + 1;
@@ -160,11 +193,12 @@ const onchainHooksScan = async () => {
         chainAlerts += 1;
         const ageDays = Math.round((Date.now() - h.firstTs) / 8640000) / 10;
         h.alerted = true;
+        const projectLines = await describeHookTokens(chain, h);
         await sendTelegram(
           `🪝 New hook active on ${chain} (v4 on-chain scan)\n` +
           `${addr.slice(0, 10)}… reached ${h.pools} pools within ${ageDays}d of first sighting.\n` +
-          `Template farms and the next narrative look identical at this stage — check the contract.\n` +
-          `${c.explorer}${addr}`, null, 'quality');
+          (projectLines ? `Projects on this hook:\n${projectLines}\n` : '') +
+          `Hook contract: ${c.explorer}${addr}`, null, 'quality');
         console.log(`[watcher] onchain hook alert: ${chain} ${addr} (${h.pools} pools)`);
       }
     } catch (err) {
@@ -427,7 +461,9 @@ const pollUpdatesInner = async () => {
             .filter(([, h]) => Date.now() - h.firstTs <= HOOK_MAX_AGE_DAYS * 86400000 && h.pools >= 2)
             .sort((a, b) => b[1].pools - a[1].pools).slice(0, 3);
           for (const [addr, h] of young) {
-            lines.push(`· ${chain}: ${addr.slice(0, 10)}… — ${h.pools} pools, ${Math.round((Date.now() - h.firstTs) / 86400000)}d`);
+            const tok = (h.tokens || [])[0];
+            lines.push(`· ${chain}: ${addr.slice(0, 10)}… — ${h.pools} pools, ${Math.round((Date.now() - h.firstTs) / 86400000)}d` +
+              (tok ? `\n  latest token: basedbot.app/token/${chain}/${tok}` : ''));
           }
         }
         await reply(`${named}\n\n⛓ Young on-chain hooks (own scan — unnamed until checked):\n${lines.join('\n') || '· registry still warming up'}`);
