@@ -95,6 +95,14 @@ const scoreHooks = (nodes, nowMs, maxAgeDays = 21, topN = 10) => {
 // registry — the v4hooks.org feed above only covers named mainnet hooks.
 // Topic hash verified empirically against RH chain block 25977605.
 const INIT_TOPIC = '0xdd466e674ea557f56295e2d0218a125ea4b4f0f6f3307b95f85e6110838d6438';
+// Swap(id, sender, …) — verified empirically on RH chain. Counting swaps on
+// YOUNG hooked pools is the "people are actually buying it" signal.
+const SWAP_TOPIC = '0x40e9cecb9f5f1f1c5b9c97dec2917b7ee92e57ba5563708daca94dd84ad7112f';
+// 🪝🌱 the SATO shape: fresh listing + bespoke hook (not a factory template,
+// so few pools total) + real swap flow. Inverse of the factory detector above.
+const HOOK_LAUNCH_MIN_SWAPS = config.hookLaunchMinSwaps || 40;
+const HOOK_LAUNCH_MAX_AGE_H = config.hookLaunchMaxAgeH || 24;
+const HOOK_BESPOKE_MAX_POOLS = config.hookBespokeMaxPools || 5;
 const HOOK_RPCS = config.hookRpcs || {
   robinhood: { url: 'https://rpc.mainnet.chain.robinhood.com',
     pm: '0x8366a39cc670b4001a1121b8f6a443a643e40951',
@@ -157,13 +165,24 @@ const onchainHooksScan = async () => {
       let from = state.lastBlock > 0 ? state.lastBlock + 1 : Math.max(1, head - 3000);
       while (from <= head) {
         const to = Math.min(from + 2000, head); // small chunks — public getLogs limits vary
+        // one call, both event types — an OR-list in topic position 0
         const logs = await rpcCall(c.url, 'eth_getLogs', [{
-          address: c.pm, topics: [INIT_TOPIC],
+          address: c.pm, topics: [[INIT_TOPIC, SWAP_TOPIC]],
           fromBlock: '0x' + from.toString(16), toBlock: '0x' + to.toString(16)
         }]);
+        state.pools = state.pools || {};
         for (const l of logs) {
+          if (l.topics[0] === SWAP_TOPIC) {
+            const p = state.pools[l.topics[1]];
+            if (p) p.swaps = (p.swaps || 0) + 1;
+            continue;
+          }
           const hook = ('0x' + l.data.slice(2 + 2 * 64 + 24, 2 + 3 * 64)).toLowerCase();
           if (hook === ZERO_HOOK) continue;
+          const cur = [l.topics[2], l.topics[3]]
+            .map((t) => ('0x' + (t || '').slice(26)).toLowerCase())
+            .filter((a) => a.length === 42 && !/^0x0{40}$/.test(a));
+          state.pools[l.topics[1]] = { hook, tokens: cur, createdTs: Date.now(), swaps: 0 };
           const h = state.hooks[hook] || { pools: 0, firstTs: Date.now(), tokens: [] };
           h.pools += 1;
           h.lastTs = Date.now();
@@ -180,6 +199,33 @@ const onchainHooksScan = async () => {
         from = to + 1;
       }
       state.lastBlock = head;
+      // 🪝🌱 hooked-launch check: young pool + bespoke hook + real flow
+      let launchAlerts = 0;
+      for (const [poolId, p] of Object.entries(state.pools)) {
+        const ageH = (Date.now() - p.createdTs) / 3600000;
+        if (ageH > 48) { delete state.pools[poolId]; continue; }
+        if (p.alerted || launchAlerts >= 2) continue;
+        if (ageH > HOOK_LAUNCH_MAX_AGE_H) continue;
+        if ((p.swaps || 0) < HOOK_LAUNCH_MIN_SWAPS) continue;
+        const hookInfo = state.hooks[p.hook];
+        if (hookInfo && hookInfo.pools > HOOK_BESPOKE_MAX_POOLS) continue; // factory, not bespoke
+        p.alerted = true;
+        launchAlerts += 1;
+        const meta = await fetchMetadata(chain, p.tokens.slice(0, 2)).catch(() => ({}));
+        const named = p.tokens.slice(0, 2).map((a) => {
+          const m = meta[a.toLowerCase()];
+          const sym = m && (m.symbol || m.name);
+          return `· ${sym ? String(sym).slice(0, 18) : a.slice(0, 10) + '…'} — https://basedbot.app/token/${chain}/${a}`;
+        }).join('\n');
+        await sendTelegram(
+          `🪝🌱 New hooked project with buyers (${chain})\n` +
+          `${Math.round(p.swaps)} swaps in its first ${Math.round(ageH * 10) / 10}h · bespoke hook mechanism ` +
+          `(${hookInfo ? hookInfo.pools : 1} pool${hookInfo && hookInfo.pools !== 1 ? 's' : ''} total)\n${named}\n` +
+          `Hook contract: ${c.explorer}${p.hook}\n` +
+          `Fresh + own mechanism + real flow — the shape SATO/uPEG had at hour one. Check the mechanism before the chart.`,
+          null, 'quality');
+        console.log(`[watcher] hooked-launch alert: ${chain} pool ${poolId.slice(0, 12)} (${p.swaps} swaps)`);
+      }
       // prune hooks that aged out without ever alerting (registry stays small)
       for (const [a, h] of Object.entries(state.hooks)) {
         if (!h.alerted && Date.now() - h.firstTs > HOOK_MAX_AGE_DAYS * 86400000) delete state.hooks[a];
