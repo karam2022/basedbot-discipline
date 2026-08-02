@@ -235,3 +235,7 @@ textarea {
 
 /* ---- Sound audition row ------------------------------------------------ */
 .bbd-sound-test { display: flex; gap: 14px; margin-top: 6px; }
+
+/* ---- Hook intelligence list ------------------------------------------- */
+.hooklink { color: var(--ink); text-decoration: none; border-bottom: 1px solid var(--rule, #444); }
+.hooklink:hover { text-decoration: underline; }

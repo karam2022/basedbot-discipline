@@ -79,3 +79,23 @@ test('an older tab cannot overwrite a newer position snapshot', async () => {
   assert.equal(stale.accepted, false);
   assert.equal(state.positions['base|wallet0|0xabcdef123456'].symbol, 'NEW');
 });
+
+test('hook scorer: young named movers rank; templates, dust and dormant are out', () => {
+  const now = Date.parse('2026-08-02T00:00:00Z');
+  const day = (n) => new Date(now - n * 86400000).toISOString();
+  const nodes = [
+    { id: '0xnew', label: 'StockPairHook', pools: 6, velocity: 3, accel: 2, status: 'accelerating', verified: 'yes', first: day(4) },
+    { id: '0xold', label: 'AncientHook', pools: 40, velocity: 5, accel: 1, status: 'steady', verified: 'yes', first: day(90) },
+    { id: '0xtpl', label: 'ClankerHookStaticFeeV2', pools: 400, velocity: 9, accel: 9, status: 'accelerating', verified: 'yes', first: day(2) },
+    { id: '0xdust', label: 'TinyHook', pools: 1, velocity: 1, accel: 1, status: 'steady', verified: 'no', first: day(3) },
+    { id: '0xdead', label: 'SleepyHook', pools: 5, velocity: 0, accel: 0, status: 'dormant', verified: 'yes', first: day(5) },
+    { id: '0xanon', label: '', pools: 9, velocity: 4, accel: 3, status: 'accelerating', verified: 'no', first: day(1) },
+    { id: '0xok', label: 'QuietNewHook', pools: 2, velocity: 0.5, accel: 0.1, status: 'steady', verified: 'no', first: day(10) }
+  ];
+  const top = bbdScoreHooks(nodes, now);
+  const names = top.map((h) => h.name);
+  assert.deepEqual(names, ['StockPairHook', 'QuietNewHook'],
+    'only young, named, multi-pool, non-template, non-dormant hooks survive — ranked by score');
+  assert.equal(top[0].verified, true);
+  assert.equal(top[0].ageDays, 4);
+});

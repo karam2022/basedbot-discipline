@@ -11,6 +11,59 @@ const urlFrom = (id) => {
 };
 
 const DEDUPE_TTL_MS = 24 * 3600 * 1000;
+
+// ---- Hook intelligence (ETH mainnet, data: v4hooks.org public JSON) --------
+// "New interesting" = young, named, multi-pool, moving — and NOT one of the
+// established launchpad template families (those are infrastructure, not news).
+const HOOKSDB_TTL_MS = 6 * 3600 * 1000;
+const HOOK_TEMPLATE_FAMILIES =
+  /^(FeeHook|UniversalKlik|ClankerHook|LivoSwap|Sa1tHook|EthCreatorFeeHook|QuoteAssetCreatorFeeHook|V4TaxHook|ERC1967Proxy)/i;
+
+// Pure scorer over v4hooks.org hook_graph nodes — exposed on the global scope
+// so the test harness can drive it directly.
+const bbdScoreHooks = (nodes, nowMs, maxAgeDays = 21, topN = 10) => {
+  const out = [];
+  for (const n of nodes || []) {
+    if (!n || !n.label || HOOK_TEMPLATE_FAMILIES.test(n.label)) continue;
+    const pools = Number(n.pools) || 0;
+    if (pools < 2) continue;
+    if (n.status === 'dormant') continue;
+    const firstTs = Date.parse(n.first || '');
+    if (!Number.isFinite(firstTs)) continue;
+    const ageDays = (nowMs - firstTs) / 86400000;
+    if (ageDays > maxAgeDays || ageDays < 0) continue;
+    const velocity = Number(n.velocity) || 0;
+    const accel = Number(n.accel) || 0;
+    const verified = n.verified === 'yes' || n.verified === true;
+    const score = accel * 3 + velocity * 2 + pools * 0.5 +
+      (maxAgeDays - ageDays) * 0.3 + (verified ? 2 : 0);
+    out.push({
+      address: n.id, name: n.label, pools, status: n.status || '?',
+      velocity, accel, ageDays: Math.round(ageDays * 10) / 10, verified,
+      callbacks: (n.callbacks || []).slice(0, 6), score: Math.round(score * 10) / 10
+    });
+  }
+  return out.sort((a, b) => b.score - a.score).slice(0, topN);
+};
+
+globalThis.bbdScoreHooks = bbdScoreHooks; // exposed for the test harness
+
+const refreshHooksDb = async (force) => {
+  const { hooksdb } = await chrome.storage.local.get('hooksdb');
+  if (!force && hooksdb && Date.now() - hooksdb.ts < HOOKSDB_TTL_MS) return hooksdb;
+  try {
+    const res = await fetch('https://v4hooks.org/data/hook_graph.json');
+    if (!res.ok) throw new Error(`hook feed HTTP ${res.status}`);
+    const graph = await res.json();
+    const items = bbdScoreHooks(graph.nodes || [], Date.now());
+    const fresh = { ts: Date.now(), generatedAt: graph.generated_at || null, items };
+    await chrome.storage.local.set({ hooksdb: fresh });
+    return fresh;
+  } catch (err) {
+    console.warn('[bbd] hooksdb refresh failed', err);
+    return hooksdb || { ts: 0, items: [], error: String(err && err.message || err) };
+  }
+};
 let alertChain = Promise.resolve();
 let positionSyncChain = Promise.resolve();
 
@@ -189,6 +242,10 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       title: '✅ BasedBot Discipline connected',
       message: 'Telegram alerts are working.'
     }).then(sendResponse).catch((err) => sendResponse({ ok: false, reason: err.message }));
+    return true;
+  }
+  if (msg.type === 'bbd-hooksdb') {
+    refreshHooksDb(Boolean(msg.force)).then(sendResponse);
     return true;
   }
   if (msg.type === 'bbd-sync-positions') {

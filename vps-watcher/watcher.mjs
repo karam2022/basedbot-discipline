@@ -56,6 +56,70 @@ const NEW_MAX_AGE_MIN = config.newMaxAgeMin || 60;
 const REPLICA_TTL_MS = (config.replicaDays || 7) * 24 * 3600 * 1000;
 // exit watch
 const EXIT_CHECK_MS = (config.exitCheckMin || 5) * 60 * 1000;
+
+// ---- 🪝 Hook intelligence (ETH mainnet, data: v4hooks.org public JSON) -----
+// Young, named, multi-pool v4 hooks gaining traction — surfaced once each to
+// the quality chat. Established launchpad template families are excluded:
+// they are infrastructure, not news. Mirrors the extension's popup scorer.
+const HOOKS_CHECK_MS = (config.hooksCheckHours || 6) * 3600 * 1000;
+const HOOKS_FEED = config.hooksFeedUrl || 'https://v4hooks.org/data/hook_graph.json';
+const HOOKS_ENABLED = config.hooksWatch !== false;
+const HOOK_TEMPLATE_FAMILIES =
+  /^(FeeHook|UniversalKlik|ClankerHook|LivoSwap|Sa1tHook|EthCreatorFeeHook|QuoteAssetCreatorFeeHook|V4TaxHook|ERC1967Proxy)/i;
+
+const scoreHooks = (nodes, nowMs, maxAgeDays = 21, topN = 10) => {
+  const out = [];
+  for (const n of nodes || []) {
+    if (!n || !n.label || HOOK_TEMPLATE_FAMILIES.test(n.label)) continue;
+    const pools = Number(n.pools) || 0;
+    if (pools < 2 || n.status === 'dormant') continue;
+    const firstTs = Date.parse(n.first || '');
+    if (!Number.isFinite(firstTs)) continue;
+    const ageDays = (nowMs - firstTs) / 86400000;
+    if (ageDays > maxAgeDays || ageDays < 0) continue;
+    const velocity = Number(n.velocity) || 0;
+    const accel = Number(n.accel) || 0;
+    const verified = n.verified === 'yes' || n.verified === true;
+    const score = accel * 3 + velocity * 2 + pools * 0.5 +
+      (maxAgeDays - ageDays) * 0.3 + (verified ? 2 : 0);
+    out.push({ address: n.id, name: n.label, pools, status: n.status || '?',
+      ageDays: Math.round(ageDays * 10) / 10, verified, score });
+  }
+  return out.sort((a, b) => b.score - a.score).slice(0, topN);
+};
+
+let hooksLatest = []; // last scored list, for /hooks
+const hooksWatch = async () => {
+  if (!HOOKS_ENABLED) return;
+  try {
+    const res = await fetch(HOOKS_FEED);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const graph = await res.json();
+    hooksLatest = scoreHooks(graph.nodes || [], Date.now());
+    const seen = loadJson(SEEN_PATH, {});
+    let sent = 0;
+    for (const h of hooksLatest) {
+      const key = `hook:${h.address}`;
+      if (seen[key] || sent >= 3) continue; // cap per run — no first-run flood
+      seen[key] = { ts: Date.now() };
+      sent += 1;
+      await sendTelegram(
+        `🪝 New hook gaining traction (ETH mainnet, v4)
+` +
+        `${h.name}${h.verified ? ' ✓verified' : ''}
+` +
+        `${h.pools} pools · ${h.status} · ${h.ageDays}d old
+` +
+        `The next hook narrative usually starts as one of these. Not advice.
+` +
+        `https://etherscan.io/address/${h.address}`, null, 'quality');
+      console.log(`[watcher] hook alert: ${h.name} (${h.pools} pools, ${h.status})`);
+    }
+    saveJson(SEEN_PATH, seen);
+  } catch (err) {
+    console.error('[watcher] hooks watch failed:', err.message.slice(0, 80));
+  }
+};
 const EXIT_HOLDER_DROP_PCT = config.exitHolderDropPct || 15;
 const EXIT_STRUCT_RISE_PTS = config.exitStructRisePts || 10;
 const TRACK_TTL_MS = (config.trackTtlDays || 7) * 24 * 3600 * 1000;
@@ -111,6 +175,7 @@ const CMD_LIST = [
   { command: 'watch', description: 'Alert on new tokens by name — /watch GUSH' },
   { command: 'unwatch', description: 'Remove a watchword — /unwatch GUSH' },
   { command: 'watchlist', description: 'Show your watchwords' },
+  { command: 'hooks', description: 'Young Uniswap v4 hooks gaining traction (ETH)' },
   { command: 'tracking', description: 'Bind THIS chat as the Tracking channel' },
   { command: 'firehose', description: 'Bind THIS chat as the Firehose channel' },
   { command: 'quality', description: 'Bind THIS chat as the Quality channel' }
@@ -128,6 +193,9 @@ const HELP_TEXT = (role, extra = '') => `🤖 BasedBot — what I can do
 /watch GUSH — ping me on any new token named GUSH
 /unwatch GUSH — remove it
 /watchlist — show them
+
+🪝 HOOKS (any chat)
+/hooks — young v4 hooks gaining traction on ETH mainnet
 ${extra ? '\n' + extra + '\n' : ''}
 ⚙️ SETUP — run inside the chat you want it to be
 /tracking · /firehose · /quality
@@ -257,6 +325,15 @@ const pollUpdatesInner = async () => {
         await reply(keys.length
           ? `📍 Under exit watch (${keys.length}):\n${keys.map((a) => `  ${a.slice(0, 14)}… (${tracked[a].chain})`).join('\n')}`
           : '📍 Nothing tracked yet. Press 📍 Track on an alert, or /track 0x…');
+        continue;
+      }
+      if (cmd === '/hooks') {
+        if (!hooksLatest.length) await hooksWatch();
+        await reply(hooksLatest.length
+          ? `🪝 Young v4 hooks gaining traction (ETH mainnet):\n` + hooksLatest.slice(0, 6)
+            .map((h) => `${h.status === 'accelerating' ? '▲' : '·'} ${h.name}${h.verified ? ' ✓' : ''} — ${h.pools} pools · ${h.status} · ${h.ageDays}d\n  etherscan.io/address/${h.address}`)
+            .join('\n')
+          : '🪝 No young hooks clearing the bar right now (or the feed is unreachable).')
         continue;
       }
       if (plugin && plugin.onCommand && await plugin.onCommand(cmd, args, reply)) continue;
@@ -908,4 +985,5 @@ setInterval(() => { scanCount += 1; tick(); }, INTERVAL_MS);
 setInterval(pollUpdates, 4000); // commands answer in ~4s, not every 30s scan
 setInterval(reloadAll, RELOAD_MS);
 setInterval(exitWatch, EXIT_CHECK_MS);
+if (HOOKS_ENABLED) { setTimeout(hooksWatch, 90 * 1000); setInterval(hooksWatch, HOOKS_CHECK_MS); }
 setInterval(heartbeat, HEARTBEAT_MS);

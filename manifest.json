@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "BasedBot Discipline",
-  "version": "1.15.1",
+  "version": "1.16.0",
   "description": "Hides meme coins on basedbot Pulse, nags you to take profit and cut losses, flags risky devs/contracts, and keeps a trade journal.",
   "permissions": [
     "storage",
@@ -10,7 +10,8 @@
   ],
   "host_permissions": [
     "https://basedbot.app/*",
-    "https://api.telegram.org/*"
+    "https://api.telegram.org/*",
+    "https://v4hooks.org/*"
   ],
   "background": {
     "service_worker": "background.js"

@@ -389,6 +389,39 @@ const init = async () => {
     $('tpFields').append(row);
   }
 
+  // 🪝 Hook intelligence — rendered from the background worker's cached DB.
+  const renderHooks = (db) => {
+    const box = $('hooksDb');
+    box.innerHTML = '';
+    if (!db || !db.items || !db.items.length) {
+      box.append(el('div', 'hint', db && db.error
+        ? 'Hook feed unreachable — showing nothing rather than stale guesses.'
+        : 'No young hooks clearing the bar right now. Quiet felt.'));
+      return;
+    }
+    for (const h of db.items.slice(0, 8)) {
+      const row = el('div', 'row numrow');
+      const label = el('span', 'label');
+      const a = el('a', 'hooklink', `${h.name}`);
+      a.href = `https://etherscan.io/address/${h.address}`;
+      a.target = '_blank';
+      a.rel = 'noreferrer';
+      label.append(a, el('span', 'sub',
+        `${h.pools} pools · ${h.status} · ${h.ageDays}d old${h.verified ? ' · verified' : ''}`));
+      const arrow = h.status === 'accelerating' ? '▲' : h.status === 'cooling' ? '▼' : '·';
+      row.append(label, el('span', 'field', arrow));
+      box.append(row);
+    }
+    if (db.ts) box.append(el('div', 'hint', 'as of ' + new Date(db.ts).toLocaleString()));
+  };
+  try {
+    chrome.runtime.sendMessage({ type: 'bbd-hooksdb' }, renderHooks);
+    $('hooksRefresh').addEventListener('click', () => {
+      $('hooksDb').innerHTML = '<div class="hint">Refreshing…</div>';
+      chrome.runtime.sendMessage({ type: 'bbd-hooksdb', force: true }, renderHooks);
+    });
+  } catch (err) { console.warn('hooksdb render failed', err); }
+
   $('maxTaxPct').value = String(settings.maxTaxPct);
   $('maxTaxPct').addEventListener('change', () => {
     const v = Number($('maxTaxPct').value);
