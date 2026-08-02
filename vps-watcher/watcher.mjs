@@ -159,7 +159,10 @@ const onchainHooksScan = async () => {
   for (const [chain, c] of Object.entries(HOOK_RPCS)) {
     try {
       const head = parseInt(await rpcCall(c.url, 'eth_blockNumber', []), 16);
-      const state = reg[chain] || { lastBlock: 0, hooks: {} };
+      reg[chain] = reg[chain] || {};
+      const state = reg[chain] || { lastBlock: 0, hooks: {}, pools: {} };
+      state.hooks = state.hooks || {};
+      state.pools = state.pools || {};   // must exist even when a scan finds nothing
       // first run starts shallow; later runs resume where they left off,
       // chunked to stay inside public-RPC getLogs limits.
       let from = state.lastBlock > 0 ? state.lastBlock + 1 : Math.max(1, head - 3000);
@@ -170,7 +173,6 @@ const onchainHooksScan = async () => {
           address: c.pm, topics: [[INIT_TOPIC, SWAP_TOPIC]],
           fromBlock: '0x' + from.toString(16), toBlock: '0x' + to.toString(16)
         }]);
-        state.pools = state.pools || {};
         for (const l of logs) {
           if (l.topics[0] === SWAP_TOPIC) {
             const p = state.pools[l.topics[1]];
@@ -230,7 +232,7 @@ const onchainHooksScan = async () => {
       for (const [a, h] of Object.entries(state.hooks)) {
         if (!h.alerted && Date.now() - h.firstTs > HOOK_MAX_AGE_DAYS * 86400000) delete state.hooks[a];
       }
-      reg[chain] = state;
+      reg[chain] = state;   // (state is the same object when it already existed)
       // alert: young hook crossed the pool threshold (max 2 per chain per
       // scan — a first run must not flood the quality channel)
       let chainAlerts = 0;
