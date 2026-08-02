@@ -134,8 +134,12 @@ BBD.plans = (() => {
         BBD.store.get(BBD.KEYS.positions, {}),
         BBD.store.get(BBD.KEYS.plans, {})
       ]);
-      // prune plans whose position is gone — a re-entry files fresh paperwork
-      const stale = Object.keys(plans).filter((k) => !positions[k]);
+      // prune plans whose position is gone — a re-entry files fresh paperwork.
+      // Only when positions are actually present: an empty store may just be a
+      // balances-API hiccup, and wiping every filed plan on a hiccup would
+      // re-prompt for the whole portfolio.
+      const stale = Object.keys(positions).length
+        ? Object.keys(plans).filter((k) => !positions[k]) : [];
       if (stale.length) {
         const next = { ...plans };
         stale.forEach((k) => delete next[k]);
