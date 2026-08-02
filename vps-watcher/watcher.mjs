@@ -88,6 +88,92 @@ const scoreHooks = (nodes, nowMs, maxAgeDays = 21, topN = 10) => {
   return out.sort((a, b) => b.score - a.score).slice(0, topN);
 };
 
+// ---- 🪝 On-chain hook registry (robinhood + base + ethereum) ---------------
+// Chain-native and dependency-free: Uniswap v4's PoolManager emits
+// Initialize(id, currency0, currency1, fee, tickSpacing, hooks, ...) on every
+// new pool. Polling those logs via public RPC builds our own per-chain hook
+// registry — the v4hooks.org feed above only covers named mainnet hooks.
+// Topic hash verified empirically against RH chain block 25977605.
+const INIT_TOPIC = '0xdd466e674ea557f56295e2d0218a125ea4b4f0f6f3307b95f85e6110838d6438';
+const HOOK_RPCS = config.hookRpcs || {
+  robinhood: { url: 'https://rpc.mainnet.chain.robinhood.com',
+    pm: '0x8366a39cc670b4001a1121b8f6a443a643e40951',
+    explorer: 'https://robinhoodchain.blockscout.com/address/' },
+  base: { url: 'https://mainnet.base.org',
+    pm: '0x498581ff718922c3f8e6a244956af099b2652b2b',
+    explorer: 'https://basescan.org/address/' },
+  ethereum: { url: 'https://eth.drpc.org',
+    pm: '0x000000000004444c5dc75cB358380D2e3dE08A90',
+    explorer: 'https://etherscan.io/address/' }
+};
+const HOOK_REGISTRY_PATH = join(ROOT, 'hooks-registry.json');
+const HOOK_SCAN_MS = (config.hookScanMin || 10) * 60 * 1000;
+const HOOK_MIN_POOLS = config.hookMinPools || 3;   // alert once a hook reaches this
+const HOOK_MAX_AGE_DAYS = config.hookMaxAgeDays || 14;
+const ZERO_HOOK = '0x0000000000000000000000000000000000000000';
+
+const rpcCall = async (url, method, params) => {
+  const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }) });
+  const j = await r.json();
+  if (j.error) throw new Error(`${method}: ${JSON.stringify(j.error).slice(0, 90)}`);
+  return j.result;
+};
+
+const onchainHooksScan = async () => {
+  if (!HOOKS_ENABLED) return;
+  const reg = loadJson(HOOK_REGISTRY_PATH, {});
+  for (const [chain, c] of Object.entries(HOOK_RPCS)) {
+    try {
+      const head = parseInt(await rpcCall(c.url, 'eth_blockNumber', []), 16);
+      const state = reg[chain] || { lastBlock: 0, hooks: {} };
+      // first run starts shallow; later runs resume where they left off,
+      // chunked to stay inside public-RPC getLogs limits.
+      let from = state.lastBlock > 0 ? state.lastBlock + 1 : Math.max(1, head - 3000);
+      while (from <= head) {
+        const to = Math.min(from + 2000, head); // small chunks — public getLogs limits vary
+        const logs = await rpcCall(c.url, 'eth_getLogs', [{
+          address: c.pm, topics: [INIT_TOPIC],
+          fromBlock: '0x' + from.toString(16), toBlock: '0x' + to.toString(16)
+        }]);
+        for (const l of logs) {
+          const hook = ('0x' + l.data.slice(2 + 2 * 64 + 24, 2 + 3 * 64)).toLowerCase();
+          if (hook === ZERO_HOOK) continue;
+          const h = state.hooks[hook] || { pools: 0, firstTs: Date.now() };
+          h.pools += 1;
+          h.lastTs = Date.now();
+          state.hooks[hook] = h;
+        }
+        from = to + 1;
+      }
+      state.lastBlock = head;
+      // prune hooks that aged out without ever alerting (registry stays small)
+      for (const [a, h] of Object.entries(state.hooks)) {
+        if (!h.alerted && Date.now() - h.firstTs > HOOK_MAX_AGE_DAYS * 86400000) delete state.hooks[a];
+      }
+      reg[chain] = state;
+      // alert: young hook crossed the pool threshold (max 2 per chain per
+      // scan — a first run must not flood the quality channel)
+      let chainAlerts = 0;
+      for (const [addr, h] of Object.entries(state.hooks)) {
+        if (h.alerted || h.pools < HOOK_MIN_POOLS || chainAlerts >= 2) continue;
+        chainAlerts += 1;
+        const ageDays = Math.round((Date.now() - h.firstTs) / 8640000) / 10;
+        h.alerted = true;
+        await sendTelegram(
+          `🪝 New hook active on ${chain} (v4 on-chain scan)\n` +
+          `${addr.slice(0, 10)}… reached ${h.pools} pools within ${ageDays}d of first sighting.\n` +
+          `Template farms and the next narrative look identical at this stage — check the contract.\n` +
+          `${c.explorer}${addr}`, null, 'quality');
+        console.log(`[watcher] onchain hook alert: ${chain} ${addr} (${h.pools} pools)`);
+      }
+    } catch (err) {
+      console.error(`[watcher] onchain hook scan failed on ${chain}:`, err.message.slice(0, 90));
+    }
+  }
+  saveJson(HOOK_REGISTRY_PATH, reg);
+};
+
 let hooksLatest = []; // last scored list, for /hooks
 const hooksWatch = async () => {
   if (!HOOKS_ENABLED) return;
@@ -329,11 +415,22 @@ const pollUpdatesInner = async () => {
       }
       if (cmd === '/hooks') {
         if (!hooksLatest.length) await hooksWatch();
-        await reply(hooksLatest.length
-          ? `🪝 Young v4 hooks gaining traction (ETH mainnet):\n` + hooksLatest.slice(0, 6)
+        const named = hooksLatest.length
+          ? `🪝 Named movers (ETH mainnet, via v4hooks.org):\n` + hooksLatest.slice(0, 5)
             .map((h) => `${h.status === 'accelerating' ? '▲' : '·'} ${h.name}${h.verified ? ' ✓' : ''} — ${h.pools} pools · ${h.status} · ${h.ageDays}d\n  etherscan.io/address/${h.address}`)
             .join('\n')
-          : '🪝 No young hooks clearing the bar right now (or the feed is unreachable).')
+          : '🪝 No named mainnet movers right now.';
+        const reg = loadJson(HOOK_REGISTRY_PATH, {});
+        const lines = [];
+        for (const [chain, st] of Object.entries(reg)) {
+          const young = Object.entries(st.hooks || {})
+            .filter(([, h]) => Date.now() - h.firstTs <= HOOK_MAX_AGE_DAYS * 86400000 && h.pools >= 2)
+            .sort((a, b) => b[1].pools - a[1].pools).slice(0, 3);
+          for (const [addr, h] of young) {
+            lines.push(`· ${chain}: ${addr.slice(0, 10)}… — ${h.pools} pools, ${Math.round((Date.now() - h.firstTs) / 86400000)}d`);
+          }
+        }
+        await reply(`${named}\n\n⛓ Young on-chain hooks (own scan — unnamed until checked):\n${lines.join('\n') || '· registry still warming up'}`);
         continue;
       }
       if (plugin && plugin.onCommand && await plugin.onCommand(cmd, args, reply)) continue;
@@ -985,5 +1082,10 @@ setInterval(() => { scanCount += 1; tick(); }, INTERVAL_MS);
 setInterval(pollUpdates, 4000); // commands answer in ~4s, not every 30s scan
 setInterval(reloadAll, RELOAD_MS);
 setInterval(exitWatch, EXIT_CHECK_MS);
-if (HOOKS_ENABLED) { setTimeout(hooksWatch, 90 * 1000); setInterval(hooksWatch, HOOKS_CHECK_MS); }
+if (HOOKS_ENABLED) {
+  setTimeout(hooksWatch, 90 * 1000);
+  setInterval(hooksWatch, HOOKS_CHECK_MS);
+  setTimeout(onchainHooksScan, 150 * 1000);
+  setInterval(onchainHooksScan, HOOK_SCAN_MS);
+}
 setInterval(heartbeat, HEARTBEAT_MS);
