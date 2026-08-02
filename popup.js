@@ -10,6 +10,9 @@ const DEFAULTS = {
   notifyEnabled: false,
   soundEnabled: true,
   soundVolumePct: 40,
+  planPromptEnabled: true,
+  structureBreakEnabled: true,
+  structureArmPct: 30,
   thresholdPct: 20,
   snoozeMin: 15,
   refireStepPct: 10,
@@ -90,7 +93,9 @@ const TOGGLES = {
     ['stopLossEnabled', 'Stop-loss nag', 'Nag when a position falls past your stop-loss'],
     ['peakGivebackEnabled', 'Peak-giveback nag', 'Nag when a winner hands back points from its peak'],
     ['notifyEnabled', 'Chrome notifications', 'Desktop ping when a held position crosses the threshold'],
-    ['soundEnabled', '🔊 Sound alerts', 'A rising chime for take-profit, a soft low tone for warnings']
+    ['soundEnabled', '🔊 Sound alerts', 'A rising chime for take-profit, a soft low tone for warnings'],
+    ['planPromptEnabled', '✍️ Dismount plans', 'New positions prompt for a per-token TP/stop, filed before the ride'],
+    ['structureBreakEnabled', '📉 Structure-break alert', 'First lower high after a climax — the dismount trigger']
   ],
   journalToggles: [
     ['journalEnabled', 'Keep a trade journal', 'Local-only lifecycle log — win rate, profit given back']
@@ -129,7 +134,8 @@ const NUMBERS = {
     ['refireStepPct', 'Re-nag after climb of', 1, 500, 'pts'],
     ['stopLossPct', 'Stop-loss at down', 1, 100, '%'],
     ['peakGivebackPct', 'Peak-giveback after', 1, 500, 'pts'],
-    ['soundVolumePct', 'Sound volume', 0, 100, '%']
+    ['soundVolumePct', 'Sound volume', 0, 100, '%'],
+    ['structureArmPct', 'Structure arms after climax of', 1, 1000, '%']
   ],
   creatorFields: [
     ['creatorMaxLaunches', 'Flag creator after N launches', 1, 100, ''],

@@ -24,6 +24,13 @@ BBD.DEFAULT_SETTINGS = Object.freeze({
   // in src/sounds.js — no audio files, volume 0–100.
   soundEnabled: true,
   soundVolumePct: 40,
+  // The Paperwork: on a new position, prompt for a per-token dismount (TP/stop)
+  // filed BEFORE the ride; the banner then enforces the filed plan.
+  planPromptEnabled: true,
+  // Structure break: after a climax of at least structureArmPct, a failed push
+  // that sets a lower high and rolls over fires a dismount alert.
+  structureBreakEnabled: true,
+  structureArmPct: 30,
   // Trade journal: log every position's entry safety snapshot, peak, and last
   // fresh exit estimate so the popup can show behavior metrics honestly.
   journalEnabled: true,
@@ -118,7 +125,8 @@ BBD.KEYS = Object.freeze({
   journal: 'journal',     // { [tradeId]: { positionKey, addr, openTs, closeTs, ... } }
   daystats: 'daystats',   // { lossDismissedDay: 'YYYY-MM-DD' } — per-day guard dismissals
   guardDismissed: 'guardDismissed', // { [tradeId]: ts } — dismissed revenge advisories
-  positionsMeta: 'positionsMeta'     // { source, sourceTs, syncedTs } — data-health status
+  positionsMeta: 'positionsMeta',    // { source, sourceTs, syncedTs } — data-health status
+  plans: 'plans'          // { [positionKey]: { tpPct, stopPct, skipped?, ts } } — filed dismounts
 });
 
 // Score penalty for a card whose creator is a flagged serial launcher/rugger.

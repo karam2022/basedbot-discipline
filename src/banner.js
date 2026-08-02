@@ -29,10 +29,14 @@ BBD.banner = (() => {
   // refireStepPct. kind 'loss': pct at/below -stopLossPct, re-fires after
   // dropping another refireStepPct. Same snooze/dismiss maps — a position is
   // only ever a winner or a loser at one moment, so the keys never collide.
-  const eligible = (positions, settings, snoozes, dismissed, kind) => {
+  const eligible = (positions, settings, snoozes, dismissed, kind, plans = {}) => {
     const now = Date.now();
     const win = kind === 'win';
-    const meets = (pct) => (win ? pct >= settings.thresholdPct : pct <= -settings.stopLossPct);
+    // A filed dismount plan (src/plans.js) overrides the global thresholds for
+    // its position — the banner enforces what the rider filed before the run.
+    const tpOf = (p) => { const pl = plans[p.positionKey]; return pl && typeof pl.tpPct === 'number' ? pl.tpPct : settings.thresholdPct; };
+    const stopOf = (p) => { const pl = plans[p.positionKey]; return pl && typeof pl.stopPct === 'number' ? pl.stopPct : settings.stopLossPct; };
+    const meets = (p) => (win ? p.pct >= tpOf(p) : p.pct <= -stopOf(p));
     const refired = (pct, dis) => (win
       ? pct >= dis + settings.refireStepPct
       : pct <= dis - settings.refireStepPct);
@@ -44,7 +48,9 @@ BBD.banner = (() => {
         ...p
       }))
       .filter((p) => typeof p.sourceTs === 'number' && Date.now() - p.sourceTs <= BBD.STALE_MS)
-      .filter((p) => typeof p.pct === 'number' && meets(p.pct))
+      .filter((p) => typeof p.pct === 'number' && meets(p))
+      .map((p) => (plans[p.positionKey] && typeof plans[p.positionKey].tpPct === 'number'
+        ? { ...p, plan: plans[p.positionKey] } : p))
       .filter((p) => !(snoozes[p.positionKey] && snoozes[p.positionKey] > now))
       .filter((p) => {
         const dis = dismissed[p.positionKey];
@@ -98,9 +104,11 @@ BBD.banner = (() => {
   const renderRow = (pos, settings, kind) => {
     const win = kind === 'win';
     const giveback = kind === 'giveback';
+    const structure = kind === 'structure';
     const row = document.createElement('div');
     row.className = win ? 'bbd-banner-row'
       : giveback ? 'bbd-banner-row bbd-banner-row-giveback'
+        : structure ? 'bbd-banner-row bbd-banner-row-structure'
         : 'bbd-banner-row bbd-banner-row-loss';
 
     const stale = Date.now() - (pos.sourceTs || pos.ts || 0) > BBD.STALE_MS;
@@ -116,12 +124,16 @@ BBD.banner = (() => {
     msg.className = 'bbd-banner-msg';
     if (pos.chain) msg.href = `/token/${pos.chain}/${pos.addr}`;
     // pos.pct is negative for losses, so it already carries its own minus sign.
-    msg.textContent = giveback
+    const planNote = pos.plan ? ` · your plan: +${pos.plan.tpPct}/−${pos.plan.stopPct}` : '';
+    msg.textContent = structure
+      ? `📉 ${sym} broke structure: first lower high after a +${pos.peakPct}% climax ` +
+        `(now ${pos.pct >= 0 ? '+' : ''}${pos.pct}%) — the book says clip.`
+      : giveback
       ? `🟠 ${sym} gave back ${Math.round(pos.givebackPct * 10) / 10} points from a +${pos.peakPct}% peak ` +
         `(now ${pos.pct >= 0 ? '+' : ''}${pos.pct}%) — protect the win?`
       : win
-        ? `🟢 ${sym} +${pos.pct}%${usd}${stale ? ' · stale' : ''} — take profit.`
-        : `🔴 ${sym} ${pos.pct}%${usd}${stale ? ' · stale' : ''} — cut losses?`;
+        ? `🟢 ${sym} +${pos.pct}%${usd}${planNote}${stale ? ' · stale' : ''} — take profit.`
+        : `🔴 ${sym} ${pos.pct}%${usd}${planNote}${stale ? ' · stale' : ''} — cut losses?`;
 
     const snoozeBtn = document.createElement('button');
     snoozeBtn.type = 'button';
@@ -165,14 +177,15 @@ BBD.banner = (() => {
     }
   };
 
-  const render = (winners, givebacks, losers, settings) => {
+  const render = (winners, givebacks, losers, settings, structure = []) => {
     const el = ensureEl();
     el.innerHTML = '';
+    appendSection(el, structure, settings, 'structure'); // dismount triggers first — most urgent
     appendSection(el, winners, settings, 'win');
     appendSection(el, givebacks, settings, 'giveback');
     appendSection(el, losers, settings, 'loss');
     // Drop the celebratory green when the banner is only about losses.
-    el.classList.toggle('bbd-has-loss', losers.length > 0 || givebacks.length > 0);
+    el.classList.toggle('bbd-has-loss', losers.length > 0 || givebacks.length > 0 || structure.length > 0);
     el.classList.toggle('bbd-loss-only', winners.length === 0 && givebacks.length === 0 && losers.length > 0);
     el.style.display = 'flex';
   };
@@ -205,25 +218,33 @@ BBD.banner = (() => {
         hide();
         return;
       }
-      const [positions, snoozes, dismissed] = await Promise.all([
+      const [positions, snoozes, dismissed, plans] = await Promise.all([
         BBD.store.get(BBD.KEYS.positions, {}),
         BBD.store.get(BBD.KEYS.snoozes, {}),
-        BBD.store.get(BBD.KEYS.dismissed, {})
+        BBD.store.get(BBD.KEYS.dismissed, {}),
+        BBD.store.get(BBD.KEYS.plans, {})
       ]);
       const winners = settings.reminderEnabled
-        ? eligible(positions, settings, snoozes, dismissed, 'win') : [];
+        ? eligible(positions, settings, snoozes, dismissed, 'win', plans) : [];
       const givebacks = settings.peakGivebackEnabled
         ? eligibleGivebacks(positions, settings, snoozes, dismissed) : [];
       const losers = settings.stopLossEnabled
-        ? eligible(positions, settings, snoozes, dismissed, 'loss')
+        ? eligible(positions, settings, snoozes, dismissed, 'loss', plans)
         : [];
-      if (winners.length === 0 && givebacks.length === 0 && losers.length === 0) {
+      // Structure-break alerts share the snooze/dismiss maps like any row.
+      const now = Date.now();
+      const structure = (settings.structureBreakEnabled !== false && BBD.structure)
+        ? BBD.structure.update(positions, settings)
+          .filter((a) => !(snoozes[a.actionKey] && snoozes[a.actionKey] > now))
+          .filter((a) => dismissed[a.actionKey] === undefined)
+        : [];
+      if (winners.length === 0 && givebacks.length === 0 && losers.length === 0 && structure.length === 0) {
         sounded.clear(); // banner gone — next appearance chimes again
         hide();
         return;
       }
-      maybeSound(winners, givebacks, losers, settings);
-      render(winners, givebacks, losers, settings);
+      maybeSound(winners, [...structure, ...givebacks], losers, settings);
+      render(winners, givebacks, losers, settings, structure);
       // Chrome notifications stay on the take-profit path (its background
       // dedupe is tuned for a rising pct); the loss nag lives in the banner.
       winners.forEach((hit) => maybeNotify(hit, settings));

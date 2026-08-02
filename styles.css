@@ -373,3 +373,33 @@ a.bbd-banner-msg:hover {
 #bbd-banner button:hover {
   background: #15803d;
 }
+
+/* ---- Dismount plan card (src/plans.js) --------------------------------- */
+#bbd-plan-card {
+  position: fixed; bottom: 18px; left: 18px; z-index: 2147483645;
+  background: #101010; color: #ece8dc; border: 1px solid #3a3a34;
+  padding: 12px 14px; font: 13px/1.45 -apple-system, sans-serif;
+  box-shadow: 0 6px 24px rgba(0,0,0,.5); max-width: 420px;
+}
+.bbd-plan-head { font-weight: 700; margin-bottom: 8px; }
+.bbd-plan-row { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
+.bbd-plan-sym { font-weight: 700; min-width: 64px; }
+.bbd-plan-field { display: flex; align-items: center; gap: 4px; font-size: 11px; color: #b9b5a8; }
+.bbd-plan-field input {
+  width: 58px; background: #1c1c18; color: #ece8dc; border: 1px solid #3a3a34;
+  padding: 3px 6px; font: 12px -apple-system, sans-serif;
+}
+.bbd-plan-file {
+  background: #2f6b34; color: #fff; border: none; padding: 4px 12px;
+  font-weight: 700; cursor: pointer;
+}
+.bbd-plan-file:hover { background: #38813e; }
+.bbd-plan-skip {
+  background: none; border: none; color: #8a8778; cursor: pointer;
+  text-decoration: underline; font-size: 11px;
+}
+.bbd-plan-more { font-size: 11px; color: #8a8778; margin-top: 6px; }
+
+/* ---- Structure-break row (src/structure.js) ---------------------------- */
+.bbd-banner-row-structure { background: #3a1f5c; }
+.bbd-banner-row-structure .bbd-banner-msg { color: #e8ddfa; }

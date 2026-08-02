@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "BasedBot Discipline",
-  "version": "1.13.1",
+  "version": "1.14.0",
   "description": "Hides meme coins on basedbot Pulse, nags you to take profit and cut losses, flags risky devs/contracts, and keeps a trade journal.",
   "permissions": [
     "storage",
@@ -48,6 +48,8 @@
         "src/intel.js",
         "src/pnl.js",
         "src/sounds.js",
+        "src/plans.js",
+        "src/structure.js",
         "src/banner.js",
         "src/guard.js",
         "src/dump.js",

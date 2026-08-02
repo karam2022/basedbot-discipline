@@ -103,3 +103,29 @@ test('a dismissed giveback stays quiet until it gives back another step', async 
   await BBD.banner.tick();
   assert.equal(givebackRows().length, 1, 're-fires after a further step of giveback');
 });
+
+test('a filed dismount plan overrides the global thresholds for its position', async () => {
+  const now = Date.now();
+  BBD.KEYS.plans = 'plans';
+  STORE.settings = {
+    reminderEnabled: true, stopLossEnabled: false, peakGivebackEnabled: false,
+    thresholdPct: 20, stopLossPct: 25, refireStepPct: 10, snoozeMin: 15
+  };
+  STORE.snoozes = {}; STORE.dismissed = {};
+  STORE.positions = {
+    // +14% — under the global 20, but OVER its filed plan of +10
+    planned: { positionKey: 'planned', addr: '0xccc', symbol: 'PLAN', pct: 14, peakPct: 14, chain: 'robinhood', sourceTs: now },
+    // +14% with no plan — global 20 applies, so no row
+    bare: { positionKey: 'bare', addr: '0xddd', symbol: 'BARE', pct: 14, peakPct: 14, chain: 'robinhood', sourceTs: now }
+  };
+  STORE.plans = { planned: { tpPct: 10, stopPct: 30, ts: now } };
+
+  await BBD.banner.tick();
+
+  const el = registry['bbd-banner'];
+  const rows = el._children.filter((c) => (c.className || '') === 'bbd-banner-row');
+  assert.equal(rows.length, 1, 'only the planned position crosses ITS OWN bar');
+  const msg = rows[0]._children.find((c) => (c.className || '').includes('bbd-banner-msg'));
+  assert.match(msg.textContent, /PLAN/);
+  assert.match(msg.textContent, /your plan: \+10/);
+});

@@ -32,6 +32,7 @@
     BBD.pnl.scan();
     BBD.intel.scan();
     BBD.banner.tick();
+    BBD.plans.tick();
     BBD.guard.tick();
   };
 
@@ -83,6 +84,7 @@
     BBD.pnl.scan();
     BBD.intel.scan();
     BBD.banner.tick();
+    BBD.plans.tick();
     BBD.guard.tick();
   }), BBD.POLL_MS));
 
