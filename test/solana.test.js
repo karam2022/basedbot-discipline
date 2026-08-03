@@ -156,6 +156,11 @@ test('unknown card stats never earn a safety bonus', () => {
 const TAPE_TOKEN = '4Nm6DVLM9NpaxFDLs8LkfzFon3igUZzfi5wdFm5mpump';
 const TRADER = 'TraderTestAddress111111111111111111111111111';
 
+// Timestamps must be relative to now: tapeFor() drops rows outside a one-hour
+// retention window, so fixtures pinned to the moment of capture would pass on
+// the day they were written and fail every day after.
+const NOW = Date.now();
+
 const svmTrade = (over) => ({
   id: '33802149555',
   operation: 'regular',
@@ -163,7 +168,7 @@ const svmTrade = (over) => ({
   baseTokenAmount: 85503.8958,
   baseTokenAmountUSD: 0.18750862275324565,
   quoteTokenAmountUSD: 0.18750862275324565,
-  date: 1785620227656,
+  date: NOW - 60 * 1000,
   swapSenderAddress: TRADER,
   transactionSenderAddress: TRADER,
   blockchain: 'Solana',
@@ -180,7 +185,7 @@ const svmTrade = (over) => ({
 test('the Solana tape normalizes into the same rows the EVM tape produces', () => {
   send('svmtrades', [
     svmTrade(),
-    svmTrade({ transactionHash: 'hash2', type: 'buy', date: 1785620223703 })
+    svmTrade({ transactionHash: 'hash2', type: 'buy', date: NOW - 64 * 1000 })
   ]);
   const rows = F.tapeFor(TAPE_TOKEN);
   assert.equal(rows.length, 2);
@@ -211,8 +216,8 @@ test('rows are attributed by baseToken.address, not by the request', () => {
 test('the tape doubles as the price feed Solana otherwise lacks', () => {
   const addr = 'Price11111111111111111111111111111111111111';
   send('svmtrades', [
-    svmTrade({ transactionHash: 'p1', date: 1785620227656, baseTokenPriceUSD: 1, baseToken: { address: addr } }),
-    svmTrade({ transactionHash: 'p2', date: 1785620999999, baseTokenPriceUSD: 2, baseTokenMarketCapUSD: 4242, baseToken: { address: addr } })
+    svmTrade({ transactionHash: 'p1', date: NOW - 600 * 1000, baseTokenPriceUSD: 1, baseToken: { address: addr } }),
+    svmTrade({ transactionHash: 'p2', date: NOW - 5 * 1000, baseTokenPriceUSD: 2, baseTokenMarketCapUSD: 4242, baseToken: { address: addr } })
   ]);
   const tick = F.tickFor(addr);
   assert.equal(tick.priceUsd, 2); // newest row wins, not last-in-array
@@ -230,7 +235,7 @@ test('an unrecognized operation is dropped, never read as a sell', () => {
 });
 
 test('candles read the Solana rows without a translation layer', () => {
-  const now = 1785620400000;
+  const now = NOW;
   const rows = [
     svmTrade({ transactionHash: 'c1', type: 'buy', date: now - 90000, baseTokenPriceUSD: 1, baseTokenAmountUSD: 10 }),
     svmTrade({ transactionHash: 'c2', type: 'sell', date: now - 30000, baseTokenPriceUSD: 2, baseTokenAmountUSD: 30 })
@@ -251,7 +256,7 @@ test('candles read the Solana rows without a translation layer', () => {
 test('the raw Solana rows stay available for the readouts, bounded', () => {
   const addr = 'Rawww11111111111111111111111111111111111111';
   const batch = Array.from({ length: 600 }, (_, i) => svmTrade({
-    transactionHash: 'r' + i, date: 1785620000000 + i, baseToken: { address: addr }
+    transactionHash: 'r' + i, date: NOW - 600000 + i, baseToken: { address: addr }
   }));
   send('svmtrades', batch);
   const raw = F.svmTradesFor(addr);
