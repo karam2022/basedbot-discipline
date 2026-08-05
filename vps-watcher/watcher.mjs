@@ -408,6 +408,7 @@ const CMD_LIST = [
   { command: 'unwatch', description: 'Remove a watchword — /unwatch GUSH' },
   { command: 'watchlist', description: 'Show your watchwords' },
   { command: 'hooks', description: 'Young Uniswap v4 hooks gaining traction (ETH)' },
+  { command: 'scoreboard', description: 'How every call actually performed (median, not highlights)' },
   { command: 'tracking', description: 'Bind THIS chat as the Tracking channel' },
   { command: 'firehose', description: 'Bind THIS chat as the Firehose channel' },
   { command: 'quality', description: 'Bind THIS chat as the Quality channel' }
@@ -428,6 +429,9 @@ const HELP_TEXT = (role, extra = '') => `🤖 BasedBot — what I can do
 
 🪝 HOOKS (any chat)
 /hooks — young v4 hooks gaining traction on ETH mainnet
+
+📊 CALLS
+/scoreboard — what every call did, median included
 ${extra ? '\n' + extra + '\n' : ''}
 ⚙️ SETUP — run inside the chat you want it to be
 /tracking · /firehose · /quality
@@ -557,6 +561,26 @@ const pollUpdatesInner = async () => {
         await reply(keys.length
           ? `📍 Under exit watch (${keys.length}):\n${keys.map((a) => `  ${a.slice(0, 14)}… (${tracked[a].chain})`).join('\n')}`
           : '📍 Nothing tracked yet. Press 📍 Track on an alert, or /track 0x…');
+        continue;
+      }
+      if (cmd === '/scoreboard') {
+        const calls = Object.values(loadJson(CALLS_PATH, {}));
+        if (!calls.length) { await reply('📊 No calls recorded yet.'); continue; }
+        const rets = calls.map((c) => (c.lastMc / c.calledMc - 1) * 100).sort((a, b) => a - b);
+        const peaks = calls.map((c) => (c.peakMc / c.calledMc - 1) * 100);
+        const med = rets[Math.floor(rets.length / 2)];
+        const winners = rets.filter((r) => r > 0).length;
+        const doubled = calls.filter((c) => c.hits.includes(2)).length;
+        const rugged = rets.filter((r) => r <= -80).length;
+        const top = [...calls].sort((a, b) => (b.peakMc / b.calledMc) - (a.peakMc / a.calledMc)).slice(0, 3);
+        const f = (x) => `${x >= 0 ? '+' : ''}${Math.round(x)}%`;
+        await reply(
+          `📊 Call scoreboard — last ${Math.round(CALL_TTL_MS / 86400000)}d, ALL calls\n` +
+          `${calls.length} called · ${doubled} hit 2X · ${rugged} down 80%+\n` +
+          `MEDIAN call right now: ${f(med)} · up: ${winners}/${calls.length}\n` +
+          `best peaks: ${top.map((c) => `$${c.symbol} ${(c.peakMc / c.calledMc).toFixed(1)}X`).join(' · ')}\n\n` +
+          `The median is the honest number. A channel that only posts its 5X's ` +
+          `is showing you the survivors — this one counts the graveyard too.`);
         continue;
       }
       if (cmd === '/hooks') {
@@ -917,15 +941,87 @@ const alertToken = async (chain, card, tier, extra = '', dest = 'quality') => {
   const stats = card.stats
     ? `top10 ${card.stats.top10}% · dev ${card.stats.dev}% · snipers ${card.stats.snipers}% · bundlers ${card.stats.bundlers}% · insiders ${card.stats.insiders}% · ${card.stats.holders} holders`
     : 'stats not yet on the card';
-  const buttons = [[
-    { text: '📍 Track', callback_data: `trk:${chain}:${card.addr}` },
-    { text: '✕ Ignore', callback_data: 'ign' }
-  ]];
+  // Research row. GMGN has no Robinhood-chain support (verified), so it is
+  // offered only where it actually resolves — a dead button is worse than none.
+  const GMGN_CHAINS = { base: 'base', ethereum: 'eth', solana: 'sol', bsc: 'bsc' };
+  const research = [{ text: '⚡ BasedBot', url }];
+  if (GMGN_CHAINS[chain]) {
+    research.push({ text: '📈 GMGN', url: `https://gmgn.ai/${GMGN_CHAINS[chain]}/token/${card.addr}` });
+  }
+  const row2 = [
+    { text: '🔍 DexS', url: `https://dexscreener.com/search?q=${card.addr}` },
+    { text: '🦎 Gecko', url: `https://www.geckoterminal.com/search?query=${card.addr}` }
+  ];
+  if (sym) row2.push({ text: '𝕏 Search', url: `https://x.com/search?q=%24${encodeURIComponent(sym)}` });
+  const buttons = [
+    research,
+    row2,
+    [{ text: '📍 Track', callback_data: `trk:${chain}:${card.addr}` },
+      { text: '✕ Ignore', callback_data: 'ign' }]
+  ];
   const webLine = card.webLine ? `\n${card.webLine}` : '';
   const ok = await sendTelegram(
     `${t.head} on Pulse (${chain})${extra}\n${label}\n${body}${webLine}\n${market}\n${stats}\n${url}`, buttons, dest);
-  if (ok) console.log(`[watcher] alerted ${tier} ${card.symbol} on ${chain}`);
+  if (ok) {
+    console.log(`[watcher] alerted ${tier} ${card.symbol} on ${chain}`);
+    recordCall(chain, card, tier);
+  }
   return ok;
+};
+
+// -------------------------------------------------- call performance --------
+// Every alert is recorded with the market cap it was called at, then followed
+// so the channel can show what a call actually did. The milestone posts are the
+// fun part; the honest part is that losers are recorded too and /scoreboard
+// reports the MEDIAN outcome, not a highlight reel of the winners.
+const CALLS_PATH = join(ROOT, 'calls.json');
+const CALL_TTL_MS = (config.callTtlDays || 7) * 24 * 3600 * 1000;
+const MILESTONES = config.callMilestones || [1.5, 2, 3, 5, 10];
+
+const recordCall = (chain, card, tier) => {
+  try {
+    const mc = moneyNum(card.mc);
+    if (!(mc > 0)) return;   // no entry price = nothing to measure against
+    const calls = loadJson(CALLS_PATH, {});
+    if (calls[card.addr]) return;             // first call is the reference
+    calls[card.addr] = {
+      chain, tier, symbol: sanitizeAlertText(card.symbol, 20) || card.addr.slice(0, 8),
+      calledMc: mc, calledTs: Date.now(), peakMc: mc, lastMc: mc, hits: []
+    };
+    saveJson(CALLS_PATH, calls);
+  } catch (err) { /* never let bookkeeping break an alert */ }
+};
+
+const fmtMc = (n) => (n >= 1e6 ? `$${(n / 1e6).toFixed(1)}M` : `$${Math.round(n / 1000)}k`);
+
+// Marks every open call against live feed prices, posts milestone hits.
+const callWatch = async (marksByChain) => {
+  const calls = loadJson(CALLS_PATH, {});
+  if (!Object.keys(calls).length) return;
+  const now = Date.now();
+  let dirty = false;
+  for (const [addr, c] of Object.entries(calls)) {
+    if (now - c.calledTs > CALL_TTL_MS) { delete calls[addr]; dirty = true; continue; }
+    const mc = (marksByChain[c.chain] || {})[addr];
+    if (!(mc > 0)) continue;
+    c.lastMc = mc;
+    if (mc > c.peakMc) { c.peakMc = mc; dirty = true; }
+    const mult = mc / c.calledMc;
+    for (const m of MILESTONES) {
+      if (mult >= m && !c.hits.includes(m)) {
+        c.hits.push(m);
+        dirty = true;
+        const icon = m >= 5 ? '🔥' : '⚡';
+        await sendTelegram(
+          `${icon} $${c.symbol} hit ${m}X\n` +
+          `called ${fmtMc(c.calledMc)} → ${fmtMc(mc)}\n` +
+          `peak since the call · dyor\n` +
+          `https://basedbot.app/token/${linkChain(c.chain)}/${addr}`, null, 'quality');
+        console.log(`[watcher] call milestone: ${c.symbol} ${m}X (${Math.round(c.calledMc / 1000)}k→${Math.round(mc / 1000)}k)`);
+      }
+    }
+  }
+  if (dirty) saveJson(CALLS_PATH, calls);
 };
 
 // ------------------------------------------------------------- exit watch ---
@@ -1089,6 +1185,7 @@ const tick = async () => {
     // throttled browser pages: a scan landed mid-render and saw 30 cards with
     // zero stats, so nothing could ever clear a safety gate. Per-tick work is
     // now constant and each chain still comes round every few ticks.
+    const marksByChain = {};
     const slice = CHAINS.length <= SCAN_PER_TICK ? CHAINS
       : Array.from({ length: SCAN_PER_TICK }, (_, i) => CHAINS[(scanCursor + i) % CHAINS.length]);
     scanCursor = (scanCursor + slice.length) % CHAINS.length;
@@ -1171,6 +1268,11 @@ const tick = async () => {
         }
       }
 
+      marksByChain[chain] = marksByChain[chain] || {};
+      for (const c of result.cards) {
+        const m = moneyNum(c.mc);
+        if (c.addr && m > 0) marksByChain[chain][c.addr] = m;
+      }
       // A render-incomplete scan (cards present, zero stats parsed) must not
       // be treated as truth: every safety gate would silently read "unknown".
       if (result.cards.length && !result.withStats) {
@@ -1286,6 +1388,7 @@ const tick = async () => {
         }
       }
     }
+    try { await callWatch(marksByChain); } catch (e) { console.error('[watcher] callWatch failed', e.message.slice(0, 70)); }
     if (plugin && plugin.onTick) { try { await plugin.onTick(); } catch (e) { console.error('[watcher] plugin.onTick failed', e.message.slice(0, 60)); } }
 
     // prune the replica registry
