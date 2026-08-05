@@ -123,6 +123,10 @@ const SWAP_TOPIC = '0x40e9cecb9f5f1f1c5b9c97dec2917b7ee92e57ba5563708daca94dd84a
 const HOOK_LAUNCH_MIN_SWAPS = config.hookLaunchMinSwaps || 40;
 const HOOK_LAUNCH_MAX_AGE_H = config.hookLaunchMaxAgeH || 24;
 const HOOK_BESPOKE_MAX_POOLS = config.hookBespokeMaxPools || 5;
+// Honeypot guard: a pool nobody can sell out of is not "real flow".
+const HOOK_MIN_SELLS = config.hookMinSells || 5;
+const HOOK_MIN_SELL_SHARE = config.hookMinSellShare || 0.15;
+const HOOK_MIN_DIRECTIONAL = config.hookMinDirectional || 12;  // sample floor for the ratio
 const HOOK_RPCS = config.hookRpcs || {
   robinhood: { url: 'https://rpc.mainnet.chain.robinhood.com',
     pm: '0x8366a39cc670b4001a1121b8f6a443a643e40951',
@@ -197,7 +201,21 @@ const onchainHooksScan = async () => {
         for (const l of logs) {
           if (l.topics[0] === SWAP_TOPIC) {
             const p = state.pools[l.topics[1]];
-            if (p) p.swaps = (p.swaps || 0) + 1;
+            if (p) {
+              p.swaps = (p.swaps || 0) + 1;
+              // Swap(id, sender, amount0, amount1, sqrtPrice, liquidity, tick, fee):
+              // amount0 > 0 means currency0 went IN — a buy of the token.
+              // Counting direction is not a nicety. A 100%-sell-tax honeypot
+              // produces a HIGH swap count precisely because every buy lands
+              // and every sell reverts, so raw swap volume is the metric a
+              // scam maximises. Only a pool people can actually LEAVE counts.
+              try {
+                const raw = BigInt('0x' + l.data.slice(2, 66));
+                const a0 = raw >= (1n << 255n) ? raw - (1n << 256n) : raw;
+                if (a0 > 0n) p.buys = (p.buys || 0) + 1;
+                else if (a0 < 0n) p.sells = (p.sells || 0) + 1;
+              } catch (e) { /* unparseable amount: counted in swaps only */ }
+            }
             continue;
           }
           const hook = ('0x' + l.data.slice(2 + 2 * 64 + 24, 2 + 3 * 64)).toLowerCase();
@@ -205,7 +223,12 @@ const onchainHooksScan = async () => {
           const cur = [l.topics[2], l.topics[3]]
             .map((t) => ('0x' + (t || '').slice(26)).toLowerCase())
             .filter((a) => a.length === 42 && !/^0x0{40}$/.test(a));
-          state.pools[l.topics[1]] = { hook, tokens: cur, createdTs: Date.now(), swaps: 0 };
+          // Never clobber an existing pool: re-scanning a block range (after a
+          // restart or a failed chunk) would otherwise reset `alerted` and the
+          // swap counters, and the same pool would alert again and again.
+          if (!state.pools[l.topics[1]]) {
+            state.pools[l.topics[1]] = { hook, tokens: cur, createdTs: Date.now(), swaps: 0, buys: 0, sells: 0 };
+          }
           const h = state.hooks[hook] || { pools: 0, firstTs: Date.now(), tokens: [] };
           h.pools += 1;
           h.lastTs = Date.now();
@@ -230,6 +253,26 @@ const onchainHooksScan = async () => {
         if (p.alerted || launchAlerts >= 2) continue;
         if (ageH > HOOK_LAUNCH_MAX_AGE_H) continue;
         if ((p.swaps || 0) < HOOK_LAUNCH_MIN_SWAPS) continue;
+        // Two-way flow test: people must be getting OUT, not just in.
+        // The share is taken over DIRECTIONAL swaps only. Measuring against
+        // p.swaps mixes a historical total with counters that started later,
+        // which branded busy healthy pools as one-way.
+        const sells = p.sells || 0;
+        const buys = p.buys || 0;
+        const directional = buys + sells;
+        const sellShare = directional ? sells / directional : 0;
+        if (directional < HOOK_MIN_DIRECTIONAL) continue;   // not enough evidence yet
+        if (sells < HOOK_MIN_SELLS || sellShare < HOOK_MIN_SELL_SHARE) {
+          // Skip this round WITHOUT disqualifying: a legitimate launch may
+          // simply not have had its first sells yet. A real honeypot never
+          // develops them and ages out of the window on its own.
+          if (!p.loggedOneWay) {
+            p.loggedOneWay = true;
+            console.log(`[watcher] hooked-launch held back ${poolId.slice(0, 12)}: ` +
+              `${buys} buys / ${sells} sells (${Math.round(sellShare * 100)}% sells) — one-way flow so far`);
+          }
+          continue;
+        }
         const hookInfo = state.hooks[p.hook];
         if (hookInfo && hookInfo.pools > HOOK_BESPOKE_MAX_POOLS) continue; // factory, not bespoke
         p.alerted = true;
@@ -242,7 +285,7 @@ const onchainHooksScan = async () => {
         }).join('\n');
         await sendTelegram(
           `🪝🌱 New hooked project with buyers (${chain})\n` +
-          `${Math.round(p.swaps)} swaps in its first ${Math.round(ageH * 10) / 10}h · bespoke hook mechanism ` +
+          `${Math.round(p.swaps)} swaps (${buys} buys / ${sells} sells) in its first ${Math.round(ageH * 10) / 10}h · bespoke hook mechanism ` +
           `(${hookInfo ? hookInfo.pools : 1} pool${hookInfo && hookInfo.pools !== 1 ? 's' : ''} total)\n${named}\n` +
           `Hook contract: ${c.explorer}${p.hook}\n` +
           `Fresh + own mechanism + real flow — the shape SATO/uPEG had at hour one. Check the mechanism before the chart.`,
