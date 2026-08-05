@@ -191,13 +191,29 @@ const onchainHooksScan = async () => {
       // first run starts shallow; later runs resume where they left off,
       // chunked to stay inside public-RPC getLogs limits.
       let from = state.lastBlock > 0 ? state.lastBlock + 1 : Math.max(1, head - 3000);
+      // Adaptive window: a fixed size fails on busy chains (robinhood blew past
+      // the 10k-log ceiling, base returned "response too large"), and a failed
+      // chunk silently starved the hooked-project detector. Shrink on refusal
+      // and keep the smaller window for the rest of the run.
+      let span = Number(config.hookChunkBlocks) || (chain === 'base' ? 400 : 1200);
       while (from <= head) {
-        const to = Math.min(from + (chain === 'base' ? 500 : 2000), head); // base rejects large windows
+        const to = Math.min(from + span, head);
         // one call, both event types — an OR-list in topic position 0
-        const logs = await rpcCall(c.url, 'eth_getLogs', [{
-          address: c.pm, topics: [[INIT_TOPIC, SWAP_TOPIC]],
-          fromBlock: '0x' + from.toString(16), toBlock: '0x' + to.toString(16)
-        }]);
+        let logs = null;
+        for (let attempt = 0; attempt < 5 && logs === null; attempt += 1) {
+          try {
+            logs = await rpcCall(c.url, 'eth_getLogs', [{
+              address: c.pm, topics: [[INIT_TOPIC, SWAP_TOPIC]],
+              fromBlock: '0x' + from.toString(16),
+              toBlock: '0x' + Math.min(from + span, head).toString(16)
+            }]);
+          } catch (err) {
+            if (/exceeds limit|too large|response size|block range|query returned/i.test(err.message) && span > 50) {
+              span = Math.max(50, Math.floor(span / 3));
+            } else throw err;
+          }
+        }
+        if (logs === null) break;   // this chain is refusing; try again next run
         for (const l of logs) {
           if (l.topics[0] === SWAP_TOPIC) {
             const p = state.pools[l.topics[1]];
@@ -242,7 +258,7 @@ const onchainHooksScan = async () => {
           }
           state.hooks[hook] = h;
         }
-        from = to + 1;
+        from = Math.min(from + span, head) + 1;
       }
       state.lastBlock = head;
       // 🪝🌱 hooked-launch check: young pool + bespoke hook + real flow
@@ -587,8 +603,11 @@ const pollUpdatesInner = async () => {
         if (!a) { await reply('Usage: /scan 0x… (a token contract address)'); continue; }
         try {
           const res = await withTimeout(scanAddress(a[0]), 25000);
-          await reply(res ? formatScan(res)
-            : `🔎 ${a[0].slice(0, 12)}… — the scan timed out. Sources were slow; try again in a minute.`);
+          if (!res) { await reply(`🔎 ${a[0].slice(0, 12)}… — scan timed out, sources were slow. Try again shortly.`); continue; }
+          await tg('sendMessage', {
+            chat_id: u.message.chat.id, text: formatScan(res), parse_mode: 'Markdown',
+            disable_web_page_preview: true, reply_markup: { inline_keyboard: scanButtons(res) || [] }
+          });
         } catch (e) { await reply(`Scan failed: ${String(e.message).slice(0, 120)}`); }
         continue;
       }
@@ -656,7 +675,13 @@ const pollUpdatesInner = async () => {
         console.log(`[watcher] auto-scan requested for ${hit[0].slice(0, 12)}…`);
         try {
           const res = await withTimeout(scanAddress(hit[0]), 25000);
-          if (res) await reply(formatScan(res));
+          if (res) {
+            await tg('sendMessage', {
+              chat_id: u.message.chat.id, text: formatScan(res), parse_mode: 'Markdown',
+              disable_web_page_preview: true, reply_to_message_id: u.message.message_id,
+              reply_markup: { inline_keyboard: scanButtons(res) || [] }
+            });
+          }
         } catch (e) { console.error('[watcher] auto-scan failed', e.message.slice(0, 80)); }
       }
     }
@@ -1052,6 +1077,8 @@ const alphaWatch = async () => {
     for (const row of rows) {
       const handle = row.handle;
       if (!handle || seen[handle.toLowerCase()]) continue;
+      // Projects only: a person's account is not something you can act on.
+      if (row.kind !== 'project') continue;
       const fol = Number(row.fol) || 0;
       if (fol < ALPHA_MIN_FOL) continue;               // too small to mean anything yet
       seen[handle.toLowerCase()] = { ts: Date.now(), fol };
@@ -1062,14 +1089,13 @@ const alphaWatch = async () => {
       const growth = Number.isFinite(entryFol) && entryFol > 0 && fol > entryFol
         ? `${entryFol.toLocaleString()} → ${fol.toLocaleString()} followers (${Math.round(fol / entryFol)}x since spotted)`
         : `${fol.toLocaleString()} followers`;
-      const kindLabel = row.kind === 'project' ? 'PROJECT' : 'PERSON';
-      const bios = (row.bios || []).slice(0, 3).join(' · ');
+      const bios = [...new Set(row.bios || [])].slice(0, 3).join(' · ');
       const said = (row.thread || []).filter((t) => t && t.body && !t.deleted).slice(0, 2)
         .map((t) => `  “${String(t.body).replace(/\s+/g, ' ').slice(0, 140)}” — @${t.xUsername || t.author}`);
 
       await sendTelegram([
         '🐦 ─── NEW ON THE RADAR ───',
-        `${row.name || handle} · @${handle}   [${kindLabel}]`,
+        `${row.name || handle}  ·  @${handle}`,
         growth,
         row.summary ? `“${String(row.summary).slice(0, 160)}”` : '',
         bios ? `tags: ${bios}` : '',
@@ -1128,10 +1154,19 @@ const scanAddress = async (addr) => {
     out.liq = ((pair.liquidity || {}).usd) || 0;
     out.vol24 = ((pair.volume || {}).h24) || 0;
     out.fdv = pair.fdv || 0;
-    out.change24 = ((pair.priceChange || {}).h24);
+    out.mc = pair.marketCap || pair.fdv || 0;
+    out.price = pair.priceUsd;
+    out.dex = pair.dexId;
+    out.quote = (pair.quoteToken || {}).symbol || '';
+    const ch = pair.priceChange || {};
+    out.change = { m5: ch.m5, h1: ch.h1, h6: ch.h6, h24: ch.h24 };
+    out.change24 = ch.h24;
+    const vol = pair.volume || {};
+    out.vol = { m5: vol.m5, h1: vol.h1, h24: vol.h24 };
     const tx = (pair.txns || {}).h24 || {};
     out.buys = tx.buys || 0;
     out.sells = tx.sells || 0;
+    out.txWindows = pair.txns || {};
     out.ageH = pair.pairCreatedAt ? (Date.now() - pair.pairCreatedAt) / 3600000 : null;
     const info = pair.info || {};
     out.websites = (info.websites || []).map((w) => w.url).filter(Boolean);
@@ -1162,6 +1197,9 @@ const scanAddress = async (addr) => {
   if (gp) {
     const pct = (x) => (x === undefined || x === null || x === '' ? null : Number(x) * 100);
     const sell = pct(gp.sell_tax), buy = pct(gp.buy_tax);
+    out.honeypot = gp.is_honeypot === '1' ? true : (gp.is_honeypot === '0' ? false : undefined);
+    if (buy !== null) out.taxB = Math.round(buy);
+    if (sell !== null) out.taxS = Math.round(sell);
     if (gp.is_honeypot === '1') out.flags.push('GoPlus flags this as a HONEYPOT');
     if (sell !== null && sell >= 20) out.flags.push(`sell tax ${sell.toFixed(0)}%`);
     if (buy !== null && buy >= 20) out.flags.push(`buy tax ${buy.toFixed(0)}%`);
@@ -1234,51 +1272,89 @@ const scanAddress = async (addr) => {
   return out;
 };
 
+const scanButtons = (r) => {
+  if (!r.chain) return null;
+  const GMGN = { base: 'base', ethereum: 'eth', solana: 'sol', bsc: 'bsc' };
+  const row1 = [{ text: '⚡ BasedBot', url: `https://basedbot.app/token/${linkChain(r.chain)}/${r.addr}` }];
+  if (GMGN[r.chain]) row1.push({ text: '📈 GMGN', url: `https://gmgn.ai/${GMGN[r.chain]}/token/${r.addr}` });
+  const row2 = [
+    { text: '🔍 DexS', url: `https://dexscreener.com/search?q=${r.addr}` },
+    { text: '🦎 Gecko', url: `https://www.geckoterminal.com/search?query=${r.addr}` }
+  ];
+  if (r.symbol) row2.push({ text: '𝕏 Search', url: `https://x.com/search?q=%24${encodeURIComponent(r.symbol)}` });
+  return [row1, row2];
+};
+
 const formatScan = (r) => {
   if (!r.chain) {
-    return `🔎 ${r.addr.slice(0, 10)}…\nNo contract and no market found on the chains we watch.\n` +
-      `It may be a wallet, a chain we do not cover, or a mistyped address.`;
+    return `🔎 ─── CONTRACT SCAN ───\n${r.addr.slice(0, 10)}…\n\n` +
+      `No contract and no market found on the chains we watch.\n` +
+      `Likely a wallet, a chain we do not cover, or a mistyped address.`;
   }
-  const label = r.symbol ? `${r.symbol}${r.name && r.name !== r.symbol ? ' — ' + r.name : ''}` : r.addr.slice(0, 12) + '…';
+  const money = (n) => {
+    if (!Number.isFinite(n) || n === 0) return '—';
+    if (n >= 1e9) return `$${(n / 1e9).toFixed(2)}B`;
+    if (n >= 1e6) return `$${(n / 1e6).toFixed(2)}M`;
+    if (n >= 1e3) return `$${(n / 1e3).toFixed(1)}K`;
+    return `$${n.toFixed(2)}`;
+  };
+  const pc = (x) => (Number.isFinite(x) ? `${x > 0 ? '+' : ''}${x}%` : '—');
+  const age = r.ageH === null || r.ageH === undefined ? '—'
+    : r.ageH < 24 ? `${Math.round(r.ageH)}h` : `${Math.round(r.ageH / 24)}d`;
+
   const severe = r.flags.some((f) => /HONEYPOT|cannot sell|sell tax|one-way/i.test(f));
   const verdict = severe ? '⛔ DO NOT TOUCH'
-    : r.flags.length >= 3 ? '🔴 high risk'
-      : r.flags.length ? '🟠 caution'
-        : '🟢 nothing alarming found';
-  const money = [
-    r.fdv ? `mc $${Math.round(r.fdv).toLocaleString()}` : null,
-    r.liq !== undefined ? `liq $${Math.round(r.liq).toLocaleString()}` : null,
-    r.vol24 !== undefined ? `vol24 $${Math.round(r.vol24).toLocaleString()}` : null,
-    typeof r.change24 === 'number' ? `24h ${r.change24 > 0 ? '+' : ''}${r.change24}%` : null,
-    r.ageH !== null && r.ageH !== undefined ? `${r.ageH < 48 ? Math.round(r.ageH) + 'h' : Math.round(r.ageH / 24) + 'd'} old` : null
-  ].filter(Boolean).join(' · ');
+    : r.flags.length >= 3 ? '🔴 HIGH RISK'
+      : r.flags.length ? '🟠 CAUTION'
+        : '🟢 NOTHING ALARMING';
+
+  const L = [];
+  L.push('🔎 ─── CONTRACT SCAN ───');
+  L.push(`📌 ${r.symbol || r.addr.slice(0, 10)}${r.name && r.name !== r.symbol ? ` | ${r.name}` : ''}  |  ${verdict}`);
+  L.push(`🔶 ${r.chain}${r.dex ? ` · ${r.dex}` : ''}${r.quote ? ` · vs ${r.quote}` : ''}  |  ⚖️ age ${age}`);
+  L.push('');
+
+  // money block
+  const liqPct = r.mc > 0 && r.liq ? ` (${Math.round((r.liq / r.mc) * 100)}% of MC)` : '';
+  L.push(`💰 MC ${money(r.mc)}  |  Liq ${money(r.liq)}${liqPct}`);
+  if (r.price) L.push(`💲 Price $${Number(r.price) < 0.01 ? Number(r.price).toFixed(10).replace(/0+$/, '') : Number(r.price).toFixed(6)}`);
+  const taxLine = r.taxB !== undefined || r.taxS !== undefined
+    ? `💳 Tax  B:${r.taxB ?? '?'}%  S:${r.taxS ?? '?'}%${r.honeypot === false ? '  |  ✅ not a honeypot' : ''}`
+    : null;
+  if (taxLine) L.push(taxLine);
+  L.push('');
+
+  // movement block — the multi-window view the good bots all show
+  const c = r.change || {};
+  L.push(`📈 5m ${pc(c.m5)}  ·  1h ${pc(c.h1)}  ·  6h ${pc(c.h6)}  ·  24h ${pc(c.h24)}`);
+  const totalTx = (r.buys || 0) + (r.sells || 0);
+  const sellPct = totalTx ? Math.round((r.sells / totalTx) * 100) : null;
+  L.push(`🔄 vol24 ${money((r.vol || {}).h24)}  |  B:${r.buys} S:${r.sells}${sellPct !== null ? ` (${sellPct}% sells)` : ''}`);
+  L.push('');
+
+  // holder structure
   const st = r.stats;
-  const holders = st && Number.isFinite(st.holders) ? st.holders : r.holders;
-  const structure = st
-    ? `top10 ${Math.round(st.top10)}% · dev ${Math.round(st.dev || 0)}% · snipers ${Math.round(st.snipers || 0)}% · bundlers ${Math.round(st.bundlers || 0)}% · insiders ${Math.round(st.insiders || 0)}%${holders ? ` · ${holders} holders` : ''}`
-    : (holders ? `${holders} holders` : '');
-  const web = [
-    r.websites && r.websites.length ? `🔗 ${r.websites[0]}` : null,
-    r.siteTitle ? `«${r.siteTitle}»` : null,
-    r.socials && r.socials.length ? r.socials.slice(0, 3).join('\n') : null
-  ].filter(Boolean).join('\n');
-  const talk = r.symbol
-    ? `💬 what people say: https://x.com/search?q=%24${encodeURIComponent(r.symbol)}`
-    : '';
-  return [
-    `🔎 ─── CONTRACT SCAN ───`,
-    verdict,
-    `${label}  (${r.chain})`,
-    money,
-    structure,
-    web,
-    r.flags.length ? `\n⚠️ ${r.flags.join('\n⚠️ ')}` : '',
-    r.good.length ? `✅ ${r.good.join(' · ')}` : '',
-    r.notes.length ? `ℹ️ ${r.notes.join(' · ')}` : '',
-    talk,
-    `https://basedbot.app/token/${linkChain(r.chain)}/${r.addr}`,
-    `Read-only checks: chain, DexScreener, GoPlus, basedbot. No flags ≠ safe.`
-  ].filter(Boolean).join('\n');
+  const holders = (st && Number.isFinite(st.holders)) ? st.holders : r.holders;
+  if (st || holders) {
+    L.push(`👤 ${holders ? `${holders.toLocaleString()} holders` : 'holders —'}` +
+      (st ? `  |  top10 ${Math.round(st.top10)}%  ·  dev ${Math.round(st.dev || 0)}%` : ''));
+    if (st) L.push(`🎯 snipers ${Math.round(st.snipers || 0)}%  ·  bundlers ${Math.round(st.bundlers || 0)}%  ·  insiders ${Math.round(st.insiders || 0)}%`);
+    L.push('');
+  }
+
+  // presence
+  if (r.websites && r.websites.length) L.push(`🔗 ${r.websites[0]}`);
+  if (r.siteTitle) L.push(`   «${r.siteTitle}»`);
+  if (r.socials && r.socials.length) L.push(`🐦 ${r.socials.slice(0, 2).map((x) => x.split(': ').slice(1).join(': ')).join('  ·  ')}`);
+  if (r.websites?.length || r.socials?.length || r.siteTitle) L.push('');
+
+  if (r.flags.length) { L.push(`⚠️ ${r.flags.join('\n⚠️ ')}`); L.push(''); }
+  if (r.good.length) { L.push(`✅ ${r.good.join('  ·  ')}`); L.push(''); }
+  if (r.notes.length) L.push(`ℹ️ ${r.notes.join('  ·  ')}`);
+
+  L.push(`\`${r.addr}\``);
+  L.push('DYOR · read-only checks (chain · DexScreener · GoPlus · basedbot). No flags ≠ safe.');
+  return L.filter((x, i, a) => !(x === '' && a[i - 1] === '')).join('\n');
 };
 
 // -------------------------------------------------- call performance --------
