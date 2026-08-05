@@ -43,6 +43,23 @@ if (!HOT_CONFIG) {
   process.exit(1);
 }
 const CHAINS = config.chains || ['robinhood'];
+// Per-chain tier policy. Solana/BSC are added for UTILITY discovery only —
+// their meme flow is the whole reason the firehose felt like noise, so the
+// 'band' (momentum, memes-welcome) lane is deliberately robinhood-only.
+const CHAIN_TIERS = config.chainTiers || {
+  robinhood: ['hot', 'gem', 'band', 'fresh', 'watch'],
+  base: ['hot', 'gem', 'band', 'fresh', 'watch'],
+  ethereum: ['hot', 'gem', 'band', 'fresh', 'watch'],
+  solana: ['hot', 'gem', 'fresh', 'watch'],
+  bsc: ['hot', 'gem', 'fresh', 'watch']
+};
+// basedbot's token URLs use a different slug than its pulse path on Solana.
+const LINK_SLUG = { solana: 'sol' };
+const linkChain = (c) => LINK_SLUG[c] || c;
+// A name that already alerted recently must not alert again under a NEW
+// address: 25 different contracts called "ELE" crossed the band in 24h and
+// each one fired. Address-level dedupe cannot see that; name-level can.
+const NAME_DEDUPE_MS = (config.nameDedupeHours || 12) * 3600 * 1000;
 const INTERVAL_MS = (config.intervalSec || 30) * 1000;
 const RELOAD_MS = (config.reloadMin || 30) * 60 * 1000;
 const TG_TOKEN = config.tgToken || '';
@@ -114,6 +131,7 @@ const HOOK_RPCS = config.hookRpcs || {
     pm: '0x000000000004444c5dc75cB358380D2e3dE08A90',
     explorer: 'https://etherscan.io/address/' }
 };
+const MAJORS_PATH = join(ROOT, 'majors.json');   // established tickers elsewhere
 const HOOK_REGISTRY_PATH = join(ROOT, 'hooks-registry.json');
 const HOOK_SCAN_MS = (config.hookScanMin || 10) * 60 * 1000;
 const HOOK_MIN_POOLS = config.hookMinPools || 3;   // alert once a hook reaches this
@@ -146,8 +164,8 @@ const describeHookTokens = async (chain, h) => {
       const m = meta[a.toLowerCase()];
       const sym = m && (m.symbol || m.name);
       lines.push(sym
-        ? `· ${String(sym).slice(0, 18)} — https://basedbot.app/token/${chain}/${a}`
-        : `· ${a.slice(0, 10)}… — https://basedbot.app/token/${chain}/${a}`);
+        ? `· ${String(sym).slice(0, 18)} — https://basedbot.app/token/${linkChain(chain)}/${a}`
+        : `· ${a.slice(0, 10)}… — https://basedbot.app/token/${linkChain(chain)}/${a}`);
     }
     return lines.join('\n');
   } catch (e) { return ''; }
@@ -167,7 +185,7 @@ const onchainHooksScan = async () => {
       // chunked to stay inside public-RPC getLogs limits.
       let from = state.lastBlock > 0 ? state.lastBlock + 1 : Math.max(1, head - 3000);
       while (from <= head) {
-        const to = Math.min(from + 2000, head); // small chunks — public getLogs limits vary
+        const to = Math.min(from + (chain === 'base' ? 500 : 2000), head); // base rejects large windows
         // one call, both event types — an OR-list in topic position 0
         const logs = await rpcCall(c.url, 'eth_getLogs', [{
           address: c.pm, topics: [[INIT_TOPIC, SWAP_TOPIC]],
@@ -217,7 +235,7 @@ const onchainHooksScan = async () => {
         const named = p.tokens.slice(0, 2).map((a) => {
           const m = meta[a.toLowerCase()];
           const sym = m && (m.symbol || m.name);
-          return `· ${sym ? String(sym).slice(0, 18) : a.slice(0, 10) + '…'} — https://basedbot.app/token/${chain}/${a}`;
+          return `· ${sym ? String(sym).slice(0, 18) : a.slice(0, 10) + '…'} — https://basedbot.app/token/${linkChain(chain)}/${a}`;
         }).join('\n');
         await sendTelegram(
           `🪝🌱 New hooked project with buyers (${chain})\n` +
@@ -225,7 +243,7 @@ const onchainHooksScan = async () => {
           `(${hookInfo ? hookInfo.pools : 1} pool${hookInfo && hookInfo.pools !== 1 ? 's' : ''} total)\n${named}\n` +
           `Hook contract: ${c.explorer}${p.hook}\n` +
           `Fresh + own mechanism + real flow — the shape SATO/uPEG had at hour one. Check the mechanism before the chart.`,
-          null, 'quality');
+          null, 'firehose');
         console.log(`[watcher] hooked-launch alert: ${chain} pool ${poolId.slice(0, 12)} (${p.swaps} swaps)`);
       }
       // prune hooks that aged out without ever alerting (registry stays small)
@@ -511,7 +529,7 @@ const pollUpdatesInner = async () => {
           for (const [addr, h] of young) {
             const tok = (h.tokens || [])[0];
             lines.push(`· ${chain}: ${addr.slice(0, 10)}… — ${h.pools} pools, ${Math.round((Date.now() - h.firstTs) / 86400000)}d` +
-              (tok ? `\n  latest token: basedbot.app/token/${chain}/${tok}` : ''));
+              (tok ? `\n  latest token: basedbot.app/token/${linkChain(chain)}/${tok}` : ''));
           }
         }
         await reply(`${named}\n\n⛓ Young on-chain hooks (own scan — unnamed until checked):\n${lines.join('\n') || '· registry still warming up'}`);
@@ -687,6 +705,42 @@ const safetyPass = (s) => {
     ratio >= 0.05 && ratio <= 0.6;
 };
 
+// A project whose PITCH is a hook mechanism — the SATO/uPEG shape. This is
+// what's worth surfacing: not the hook contract address (there are thousands,
+// mostly launchpad templates), but a token listing that says its mechanism is
+// the hook. Matches the token's own name/symbol or its site's self-description.
+const HOOK_NARRATIVE = /\b(uniswap\s*v4|v4\s*hook|hook[- ]?(powered|based|driven)|hooks?\b)/i;
+const hookNarrative = (card, peekLine) => {
+  const inName = HOOK_NARRATIVE.test(`${card.symbol || ''} ${card.name || ''}`);
+  const inSite = Boolean(peekLine) && HOOK_NARRATIVE.test(peekLine);
+  if (!inName && !inSite) return null;
+  return inName ? 'name' : 'site';
+};
+
+// Established elsewhere? A brand-new listing reusing a top-market-cap ticker
+// from Solana/BNB/etc is a rehash of someone else's project, not a launch.
+// Refreshed daily from CoinGecko's free list; absence of the file just means
+// the filter is inactive, never a crash.
+const loadMajors = () => new Set(loadJson(MAJORS_PATH, { symbols: [] }).symbols || []);
+let MAJORS = loadMajors();
+const refreshMajors = async () => {
+  try {
+    const res = await fetch('https://api.coingecko.com/api/v3/coins/markets' +
+      '?vs_currency=usd&order=market_cap_desc&per_page=250&page=1');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const rows = await res.json();
+    const symbols = rows.map((r) => String(r.symbol || '').toLowerCase())
+      .filter((x) => x.length >= 3);   // 1-2 char tickers collide with everything
+    if (symbols.length > 50) {
+      saveJson(MAJORS_PATH, { symbols, ts: Date.now() });
+      MAJORS = new Set(symbols);
+      console.log(`[watcher] majors list refreshed: ${symbols.length} tickers`);
+    }
+  } catch (err) {
+    console.error('[watcher] majors refresh failed:', err.message.slice(0, 70));
+  }
+};
+
 // Replica check: a token whose symbol OR name matches a recently seen launch
 // under a different address is a copy, not a new idea (the $MISSPELED trap).
 const replicaCheck = (card, names) => {
@@ -807,7 +861,7 @@ const TIERS = {
 };
 
 const alertToken = async (chain, card, tier, extra = '', dest = 'quality') => {
-  const url = `https://basedbot.app/token/${chain}/${card.addr}`;
+  const url = `https://basedbot.app/token/${linkChain(chain)}/${card.addr}`;
   const sym = sanitizeAlertText(card.symbol, 20);
   const nm = sanitizeAlertText(card.name, 40);
   const label = nm ? `${sym} — ${nm}` : (sym || card.addr.slice(0, 10));
@@ -914,7 +968,7 @@ const exitWatch = async () => {
       if (reasons.length) {
         t.lastExitAlert = now;
         await sendTelegram(
-          `⚠️ EXIT WATCH (${chain})\n${addr.slice(0, 12)}…\n${reasons.join('\n')}\nhttps://basedbot.app/token/${chain}/${addr}`, null, 'tracking');
+          `⚠️ EXIT WATCH (${chain})\n${addr.slice(0, 12)}…\n${reasons.join('\n')}\nhttps://basedbot.app/token/${linkChain(chain)}/${addr}`, null, 'tracking');
       }
     }
   }
@@ -956,7 +1010,7 @@ const openChain = async (chain) => {
     return route.continue();
   });
   const cdp = await context.newCDPSession(page);
-  await cdp.send('Emulation.setCPUThrottlingRate', { rate: 3 });
+  await cdp.send('Emulation.setCPUThrottlingRate', { rate: config.cpuThrottle || 2 });
   await page.goto(`https://basedbot.app/pulse/${chain}`, { waitUntil: 'domcontentloaded', timeout: 45000 });
   await page.waitForTimeout(10000);
   pages.set(chain, page);
@@ -973,6 +1027,8 @@ const start = async () => {
 
 // ------------------------------------------------------------------ tick ----
 let ticking = false;
+let scanCursor = 0;
+const SCAN_PER_TICK = config.scanChainsPerTick || 2;
 const noStatsStreak = new Map();
 const layoutWarnedFor = new Set();
 
@@ -983,7 +1039,14 @@ const tick = async () => {
     const seen = loadJson(SEEN_PATH, {});
     const names = loadJson(NAMES_PATH, {});
     const watchwords = loadJson(WATCH_PATH, {});
-    for (const chain of CHAINS) {
+    // Round-robin the chain list. Scanning all five every tick starved the
+    // throttled browser pages: a scan landed mid-render and saw 30 cards with
+    // zero stats, so nothing could ever clear a safety gate. Per-tick work is
+    // now constant and each chain still comes round every few ticks.
+    const slice = CHAINS.length <= SCAN_PER_TICK ? CHAINS
+      : Array.from({ length: SCAN_PER_TICK }, (_, i) => CHAINS[(scanCursor + i) % CHAINS.length]);
+    scanCursor = (scanCursor + slice.length) % CHAINS.length;
+    for (const chain of slice) {
       let result;
       try {
         result = await pages.get(chain).evaluate(scanPage);
@@ -1032,15 +1095,45 @@ const tick = async () => {
         if (age !== null && age <= NEW_MAX_AGE_MIN && !kw && !replica &&
           card.titles.some((t) => UTILITY_TITLES.includes(t))) tiers.push('fresh');
 
+        // Rehash guard: a new listing reusing an established ticker from
+        // another chain is someone else's project relabelled.
+        const sym = normToken(card.symbol);
+        const nam = normToken(card.name);
+        const rehash = (sym && MAJORS.has(sym)) || (nam && MAJORS.has(nam));
+        if (rehash) {
+          console.log(`[watcher] skipped ${card.symbol}: rehash of an established ticker`);
+          continue;
+        }
+        const allowed = CHAIN_TIERS[chain] || CHAIN_TIERS.robinhood;
         for (const tier of tiers) {
+          if (!allowed.includes(tier)) continue;   // e.g. no meme 'band' lane on solana/bsc
           const key = `${tier}:${card.addr}`;
           const upgraded = tier === 'hot' && !seen[key] && seen[`gem:${card.addr}`];
           if (seen[key] && Date.now() - seen[key].ts < REALERT_MS) continue;
           if (tier === 'gem' && seen[`hot:${card.addr}`]) continue; // never downgrade-noise
-          pending.push({ card, tier, upgraded });
+          // Name-level dedupe: the same ticker under a fresh address is the
+          // same message to a reader. Watchwords are exempt (that IS the ask).
+          const nkey = sym || nam;
+          if (tier !== 'watch' && nkey && nkey.length >= 3) {
+            const prior = seen[`name:${nkey}`];
+            if (prior && prior.addr !== card.addr && Date.now() - prior.ts < NAME_DEDUPE_MS) {
+              console.log(`[watcher] deduped ${tier} ${card.symbol}: same name alerted ${Math.round((Date.now() - prior.ts) / 60000)}min ago`);
+              continue;
+            }
+          }
+          pending.push({ card, tier, upgraded, nkey });
         }
       }
 
+      // A render-incomplete scan (cards present, zero stats parsed) must not
+      // be treated as truth: every safety gate would silently read "unknown".
+      if (result.cards.length && !result.withStats) {
+        console.log(`[watcher] ${chain}: scan landed mid-render (${result.cards.length} cards, no stats) — skipping`);
+        continue;
+      }
+      if (process.env.BBD_DEBUG_TIERS) {
+        console.log(`[debug] ${chain}: cards=${result.cards.length} withStats=${result.withStats} pending=${pending.length}`);
+      }
       // Enrich pending alerts in one metadata batch, then peek websites so the
       // alert carries the project's own self-description (or exposes a dead /
       // borrowed link). 🌱 requires a LIVE website — fake presence disqualifies.
@@ -1055,6 +1148,11 @@ const tick = async () => {
         for (const x of pending) {
           const key = `${x.tier}:${x.card.addr}`;
           const flags = [];
+          const stampName = () => {
+            if (x.tier !== 'watch' && x.nkey && x.nkey.length >= 3) {
+              seen[`name:${x.nkey}`] = { addr: x.card.addr, ts: Date.now() };
+            }
+          };
           let peek = null;
           if (x.card.website) {
             peek = await sitePeek(x.card.website);
@@ -1098,13 +1196,23 @@ const tick = async () => {
           const txN = Number((x.card.tx || '').replace(/[^0-9]/g, '')) || 0;
           const freshStrict = x.tier === 'fresh' && peek && peek.ok &&
             UTILITY_WORDS.test(peek.line) && txN >= 25;
+          // A listing whose own pitch is a hook mechanism (SATO/uPEG shape) is
+          // the hook signal worth a human's attention — not a contract address.
+          const hookWhy = hookNarrative(x.card, peek && peek.ok ? peek.line : '');
+          if (hookWhy) {
+            flags.push(hookWhy === 'name'
+              ? '🪝 hook mechanism in the token name'
+              : '🪝 the project describes a hook mechanism');
+          }
           let dest = 'firehose';
           if (x.tier === 'hot' || x.tier === 'watch') dest = 'quality';
           else if (freshStrict) dest = 'quality';
+          else if (hookWhy) dest = 'quality';   // hook-narrative listings are rare; promote
           else if (x.tier === 'gem' && socialScore(x.card) >= 4) dest = 'quality';
-          const crown = freshStrict ? ' 👑' : '';
+          const crown = (freshStrict ? ' 👑' : '') + (hookWhy ? ' 🪝' : '');
           await alertToken(chain, x.card, x.tier, (x.upgraded ? ' — upgraded from 💎' : '') + crown, dest);
           if (plugin && plugin.onSignal) { try { plugin.onSignal(chain, x.card, x.tier); } catch (e) { /* plugin errors never break alerts */ } }
+          stampName();
           seen[key] = { ts: Date.now() };
           saveJson(SEEN_PATH, seen); // persist per-send: crash must not re-alert
         }
@@ -1161,11 +1269,16 @@ try {
   if (plugin) console.log('[watcher] local plugin loaded');
 } catch (e) { /* no plugin present — normal for the public build */ }
 await registerCommands(); // after plugin load, so its commands join the menu
-await tick();
+// Timers are registered BEFORE the first scan. Awaiting that scan used to
+// block every setInterval below it, and once the chain list grew to five a
+// single tick could outlast them all — commands, majors refresh and the hook
+// scans simply never got scheduled. The first tick needs nothing from them.
 setInterval(() => { scanCount += 1; tick(); }, INTERVAL_MS);
 setInterval(pollUpdates, 4000); // commands answer in ~4s, not every 30s scan
 setInterval(reloadAll, RELOAD_MS);
 setInterval(exitWatch, EXIT_CHECK_MS);
+setTimeout(refreshMajors, 20 * 1000);
+setInterval(refreshMajors, 24 * 3600 * 1000);
 if (HOOKS_ENABLED) {
   setTimeout(hooksWatch, 90 * 1000);
   setInterval(hooksWatch, HOOKS_CHECK_MS);
@@ -1173,3 +1286,4 @@ if (HOOKS_ENABLED) {
   setInterval(onchainHooksScan, HOOK_SCAN_MS);
 }
 setInterval(heartbeat, HEARTBEAT_MS);
+tick();   // kick off the first scan without blocking the schedulers above
