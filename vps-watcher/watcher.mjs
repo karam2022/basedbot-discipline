@@ -1131,8 +1131,16 @@ const tick = async () => {
       // A render-incomplete scan (cards present, zero stats parsed) must not
       // be treated as truth: every safety gate would silently read "unknown".
       if (result.cards.length && !result.withStats) {
-        console.log(`[watcher] ${chain}: scan landed mid-render (${result.cards.length} cards, no stats) — skipping`);
-        continue;
+        // One cheap retry beats discarding the cycle: the page is usually a
+        // couple of seconds from having its stats painted.
+        await new Promise((r) => setTimeout(r, 6000));
+        try {
+          result = await pages.get(chain).evaluate(scanPage);
+        } catch (e) { /* keep the first result; the guard below still applies */ }
+        if (result.cards.length && !result.withStats) {
+          console.log(`[watcher] ${chain}: still mid-render after retry (${result.cards.length} cards) — skipping`);
+          continue;
+        }
       }
       if (process.env.BBD_DEBUG_TIERS) {
         console.log(`[debug] ${chain}: cards=${result.cards.length} withStats=${result.withStats} pending=${pending.length}`);
