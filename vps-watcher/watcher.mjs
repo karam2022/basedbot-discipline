@@ -284,7 +284,8 @@ const onchainHooksScan = async () => {
           return `· ${sym ? String(sym).slice(0, 18) : a.slice(0, 10) + '…'} — https://basedbot.app/token/${linkChain(chain)}/${a}`;
         }).join('\n');
         await sendTelegram(
-          `🪝🌱 New hooked project with buyers (${chain})\n` +
+          `🪝 ─── HOOKED PROJECT ───\n` +
+          `(${chain}) fresh pool, own mechanism, buyers present\n` +
           `${Math.round(p.swaps)} swaps (${buys} buys / ${sells} sells) in its first ${Math.round(ageH * 10) / 10}h · bespoke hook mechanism ` +
           `(${hookInfo ? hookInfo.pools : 1} pool${hookInfo && hookInfo.pools !== 1 ? 's' : ''} total)\n${named}\n` +
           `Hook contract: ${c.explorer}${p.hook}\n` +
@@ -580,11 +581,15 @@ const pollUpdatesInner = async () => {
         continue;
       }
       if (cmd === '/scan') {
-        const a = (args[0] || '').match(/0x[a-fA-F0-9]{40}/);
+        // Accept the address anywhere in the message — people paste it on the
+        // next line, or after an @botname mention.
+        const a = (u.message.text || '').match(/0x[a-fA-F0-9]{40}/);
         if (!a) { await reply('Usage: /scan 0x… (a token contract address)'); continue; }
-        await reply('🔎 Scanning…');
-        try { await reply(formatScan(await scanAddress(a[0]))); }
-        catch (e) { await reply(`Scan failed: ${String(e.message).slice(0, 120)}`); }
+        try {
+          const res = await withTimeout(scanAddress(a[0]), 25000);
+          await reply(res ? formatScan(res)
+            : `🔎 ${a[0].slice(0, 12)}… — the scan timed out. Sources were slow; try again in a minute.`);
+        } catch (e) { await reply(`Scan failed: ${String(e.message).slice(0, 120)}`); }
         continue;
       }
       if (cmd === '/scoreboard') {
@@ -649,8 +654,10 @@ const pollUpdatesInner = async () => {
           reply_to_message_id: u.message.message_id
         });
         console.log(`[watcher] auto-scan requested for ${hit[0].slice(0, 12)}…`);
-        try { await reply(formatScan(await scanAddress(hit[0]))); }
-        catch (e) { console.error('[watcher] auto-scan failed', e.message.slice(0, 80)); }
+        try {
+          const res = await withTimeout(scanAddress(hit[0]), 25000);
+          if (res) await reply(formatScan(res));
+        } catch (e) { console.error('[watcher] auto-scan failed', e.message.slice(0, 80)); }
       }
     }
     if (u.message && u.message.chat && txt.split('@')[0] === '/quality') {
@@ -1001,13 +1008,84 @@ const alertToken = async (chain, card, tier, extra = '', dest = 'quality') => {
       { text: '✕ Ignore', callback_data: 'ign' }]
   ];
   const webLine = card.webLine ? `\n${card.webLine}` : '';
+  // Each alert family gets its own rule so they are distinguishable at a
+  // glance in a busy channel — a listing, a hook project and a radar hit
+  // should never look like the same message.
+  const RULES = {
+    hot: '🔥 ─── BEST GUESS ───',
+    gem: '💎 ─── POSSIBLE GEM ───',
+    band: '🚀 ─── MOMENTUM ───',
+    fresh: '🌱 ─── NEW LISTING ───',
+    watch: '🔔 ─── WATCHWORD HIT ───'
+  };
+  const rule = RULES[tier] || t.head;
   const ok = await sendTelegram(
-    `${t.head} on Pulse (${chain})${extra}\n${label}\n${body}${webLine}\n${market}\n${stats}\n${url}`, buttons, dest);
+    `${rule}\n${label}   (${chain})${extra}\n${body}${webLine}\n${market}\n${stats}\n${url}`, buttons, dest);
   if (ok) {
     console.log(`[watcher] alerted ${tier} ${card.symbol} on ${chain}`);
     recordCall(chain, card, tier);
   }
   return ok;
+};
+
+// -------------------------------------------------------- alpha radar ------
+// purealpha.app publishes a public feed of newly-surfaced X accounts and
+// projects. The signal we care about is not the account existing — it is
+// follower velocity since discovery (one row went 13 → 14,073) plus whatever
+// the community has written under it.
+const ALPHA_PATH = join(ROOT, 'alpha-seen.json');
+const ALPHA_FEED = config.alphaFeedUrl || 'https://purealpha.app/api/feed?feed=new';
+const ALPHA_CHECK_MS = (config.alphaCheckMin || 15) * 60 * 1000;
+const ALPHA_ENABLED = config.alphaWatch !== false;
+const ALPHA_MIN_FOL = config.alphaMinFollowers || 500;
+const ALPHA_MAX_PER_RUN = config.alphaMaxPerRun || 3;
+
+const alphaWatch = async () => {
+  if (!ALPHA_ENABLED) return;
+  try {
+    const r = await fetch(ALPHA_FEED, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const j = await r.json();
+    const rows = j.previewRows || j.rows || [];
+    const seen = loadJson(ALPHA_PATH, {});
+    let sent = 0;
+    for (const row of rows) {
+      const handle = row.handle;
+      if (!handle || seen[handle.toLowerCase()]) continue;
+      const fol = Number(row.fol) || 0;
+      if (fol < ALPHA_MIN_FOL) continue;               // too small to mean anything yet
+      seen[handle.toLowerCase()] = { ts: Date.now(), fol };
+      if (sent >= ALPHA_MAX_PER_RUN) continue;          // marked seen, just not shouted
+      sent += 1;
+
+      const entryFol = Number((row.entry || {}).fol);
+      const growth = Number.isFinite(entryFol) && entryFol > 0 && fol > entryFol
+        ? `${entryFol.toLocaleString()} → ${fol.toLocaleString()} followers (${Math.round(fol / entryFol)}x since spotted)`
+        : `${fol.toLocaleString()} followers`;
+      const kindLabel = row.kind === 'project' ? 'PROJECT' : 'PERSON';
+      const bios = (row.bios || []).slice(0, 3).join(' · ');
+      const said = (row.thread || []).filter((t) => t && t.body && !t.deleted).slice(0, 2)
+        .map((t) => `  “${String(t.body).replace(/\s+/g, ' ').slice(0, 140)}” — @${t.xUsername || t.author}`);
+
+      await sendTelegram([
+        '🐦 ─── NEW ON THE RADAR ───',
+        `${row.name || handle} · @${handle}   [${kindLabel}]`,
+        growth,
+        row.summary ? `“${String(row.summary).slice(0, 160)}”` : '',
+        bios ? `tags: ${bios}` : '',
+        said.length ? `\n💬 people are saying:\n${said.join('\n')}` : '',
+        `\nhttps://x.com/${handle}`,
+        'Surfaced by purealpha · an account is not a token. Find what they ship before you buy anything.'
+      ].filter(Boolean).join('\n'), null, 'firehose');
+      console.log(`[watcher] alpha radar: @${handle} (${fol} followers, ${row.kind})`);
+    }
+    // keep the seen-map from growing without bound
+    const cutoff = Date.now() - 30 * 86400000;
+    for (const [k, v] of Object.entries(seen)) if (v.ts < cutoff) delete seen[k];
+    saveJson(ALPHA_PATH, seen);
+  } catch (err) {
+    console.error('[watcher] alpha radar failed:', String(err.message).slice(0, 80));
+  }
 };
 
 // ------------------------------------------------------ contract scanner ----
@@ -1016,127 +1094,191 @@ const alertToken = async (chain, card, tier, extra = '', dest = 'quality') => {
 // security, and our own rehash/meme rules. Never signs anything.
 const GOPLUS_CHAIN = { robinhood: '4663', base: '8453', ethereum: '1', bsc: '56', solana: 'solana' };
 
+const withTimeout = (p, ms, fallback = null) =>
+  Promise.race([p, new Promise((r) => setTimeout(() => r(fallback), ms))]).catch(() => fallback);
+
+// DexScreener is the backbone: one keyless call returns the chain, symbol,
+// liquidity, 24h volume, the BUY/SELL split, socials and the pair's age — with
+// no browser involved, which matters because the watcher's pages recycle.
+const dexScreener = async (addr) => {
+  const r = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${addr}`);
+  if (!r.ok) return null;
+  const j = await r.json();
+  const pairs = (j && j.pairs) || [];
+  if (!pairs.length) return null;
+  return pairs.sort((a, b) => ((b.liquidity || {}).usd || 0) - ((a.liquidity || {}).usd || 0))[0];
+};
+
+const goPlus = async (chainId, addr) => {
+  const r = await fetch(`https://api.gopluslabs.io/api/v1/token_security/${chainId}?contract_addresses=${addr}`);
+  if (!r.ok) return null;
+  const j = await r.json();
+  return Object.values((j && j.result) || {})[0] || null;
+};
+
 const scanAddress = async (addr) => {
-  const out = { addr, chain: null, codeSize: 0, stats: null, goplus: null, flags: [], good: [] };
+  const out = { addr, flags: [], good: [], notes: [] };
+  const DEX_CHAIN_ID = { robinhood: '4663', base: '8453', ethereum: '1', bsc: '56', solana: 'solana' };
 
-  // 1. Which chain? The SAME address can hold different contracts on different
-  //    chains (verified: a known Ethereum token also has code at that address
-  //    on Base), so taking the first hit reports the wrong token's data.
-  //    Collect every chain with code, then prefer the one basedbot actually
-  //    indexes as a token — that is the one the pasted address means.
-  const present = [];
-  for (const [chain, c] of Object.entries(HOOK_RPCS)) {
-    try {
-      const code = await rpcCall(c.url, 'eth_getCode', [addr, 'latest']);
-      const size = (code.length - 2) / 2;
-      if (size > 0) present.push({ chain, size });
-    } catch (e) { /* chain unreachable — do not guess */ }
+  const pair = await withTimeout(dexScreener(addr), 9000);
+  if (pair) {
+    out.chain = pair.chainId;
+    out.symbol = (pair.baseToken || {}).symbol || '';
+    out.name = (pair.baseToken || {}).name || '';
+    out.liq = ((pair.liquidity || {}).usd) || 0;
+    out.vol24 = ((pair.volume || {}).h24) || 0;
+    out.fdv = pair.fdv || 0;
+    out.change24 = ((pair.priceChange || {}).h24);
+    const tx = (pair.txns || {}).h24 || {};
+    out.buys = tx.buys || 0;
+    out.sells = tx.sells || 0;
+    out.ageH = pair.pairCreatedAt ? (Date.now() - pair.pairCreatedAt) / 3600000 : null;
+    const info = pair.info || {};
+    out.websites = (info.websites || []).map((w) => w.url).filter(Boolean);
+    out.socials = (info.socials || []).map((x) => `${x.type}: ${x.url}`);
   }
-  if (!present.length) { out.flags.push('no contract code found on any chain we watch'); return out; }
-  let best = null;
-  for (const p of present) {
-    try {
-      const meta = await fetchMetadata(p.chain, [addr]);
-      const m = meta[addr.toLowerCase()];
-      if (m && (m.symbol || m.name)) { best = { ...p, meta: m }; break; }
-    } catch (e) { /* keep looking */ }
+
+  // Chain fallback: no DexScreener pair means no market we can read, but the
+  // address may still be a contract — say so rather than guessing a chain.
+  if (!out.chain) {
+    const present = [];
+    for (const [chain, c] of Object.entries(HOOK_RPCS)) {
+      const code = await withTimeout(rpcCall(c.url, 'eth_getCode', [addr, 'latest']), 4000);
+      if (code && (code.length - 2) / 2 > 0) present.push(chain);
+    }
+    if (!present.length) { out.flags.push('no contract code found on any chain we watch'); return out; }
+    out.chain = present[0];
+    out.notes.push(`contract exists on ${present.join(', ')} but no tradeable pair was found`);
   }
-  const chosen = best || present[0];
-  out.chain = chosen.chain;
-  out.codeSize = chosen.size;
-  out.alsoOn = present.filter((p) => p.chain !== out.chain).map((p) => p.chain);
-  if (!best) out.flags.push('not indexed as a token by basedbot on any of these chains');
 
-  // 2. basedbot's own numbers (the same ones the alerts use)
-  try {
-    const res = await fetchTrackedMetrics(out.chain, [addr]);
-    if (res && res.data) {
-      const m = Object.entries(res.data).find(([k]) => k.toLowerCase().startsWith(addr.toLowerCase()));
-      if (m) {
-        const v = m[1] || {};
-        out.stats = {
-          holders: Number(v.holdersCount), top10: Number(v.top10HoldersPct),
-          insiders: Number(v.insidersPct), snipers: Number(v.snipersPct), dev: Number(v.devHoldingsPct)
-        };
-      }
-    }
-  } catch (e) { /* metrics unavailable */ }
+  // Everything below runs in parallel and is allowed to fail: a scan that
+  // cannot answer is still better than a scan that never replies.
+  const gpId = DEX_CHAIN_ID[out.chain];
+  const [gp, metrics] = await Promise.all([
+    gpId ? withTimeout(goPlus(gpId, addr), 9000) : null,
+    withTimeout(fetchTrackedMetrics(out.chain, [addr]), 7000)
+  ]);
 
-  // 3. name/symbol → rehash + meme rules
-  try {
-    const m = (best && best.meta) || (await fetchMetadata(out.chain, [addr]))[addr.toLowerCase()];
-    if (m) {
-      out.symbol = m.symbol || '';
-      out.name = m.name || '';
-      const sym = String(out.symbol).toLowerCase().replace(/[^a-z0-9]/g, '');
-      const nam = String(out.name).toLowerCase().replace(/[^a-z0-9]/g, '');
-      if ((sym && MAJORS.has(sym)) || (nam && MAJORS.has(nam))) {
-        out.flags.push(`name reuses an established ticker (${out.symbol}) — rehash pattern`);
-      }
-      if (hasKw(`${sym} ${nam}`)) out.flags.push('meme-keyword name');
-    }
-  } catch (e) { /* metadata unavailable */ }
-
-  // 4. GoPlus token security (free, keyless). Thin on Robinhood Chain but rich
-  //    on ETH/Base — the honeypot and tax fields are the ones that matter.
-  const gp = GOPLUS_CHAIN[out.chain];
   if (gp) {
-    try {
-      const r = await fetch(`https://api.gopluslabs.io/api/v1/token_security/${gp}?contract_addresses=${addr}`);
-      const j = await r.json();
-      const t = Object.values((j && j.result) || {})[0];
-      if (t) {
-        out.goplus = t;
-        const pct = (x) => (x === undefined || x === null || x === '' ? null : Number(x) * 100);
-        if (t.is_honeypot === '1') out.flags.push('GoPlus: HONEYPOT');
-        const sell = pct(t.sell_tax), buy = pct(t.buy_tax);
-        if (sell !== null && sell >= 20) out.flags.push(`sell tax ${sell.toFixed(0)}%`);
-        if (buy !== null && buy >= 20) out.flags.push(`buy tax ${buy.toFixed(0)}%`);
-        if (t.cannot_sell_all === '1') out.flags.push('cannot sell all');
-        if (t.is_blacklisted === '1') out.flags.push('blacklist function');
-        if (t.is_mintable === '1') out.flags.push('mintable supply');
-        if (t.transfer_pausable === '1') out.flags.push('transfers pausable');
-        if (t.is_open_source === '0') out.flags.push('source NOT verified');
-        else if (t.is_open_source === '1') out.good.push('source verified');
-        if (t.owner_address && /^0x0{40}$/.test(t.owner_address)) out.good.push('ownership renounced');
-      }
-    } catch (e) { /* goplus unavailable */ }
+    const pct = (x) => (x === undefined || x === null || x === '' ? null : Number(x) * 100);
+    const sell = pct(gp.sell_tax), buy = pct(gp.buy_tax);
+    if (gp.is_honeypot === '1') out.flags.push('GoPlus flags this as a HONEYPOT');
+    if (sell !== null && sell >= 20) out.flags.push(`sell tax ${sell.toFixed(0)}%`);
+    if (buy !== null && buy >= 20) out.flags.push(`buy tax ${buy.toFixed(0)}%`);
+    if (gp.cannot_sell_all === '1') out.flags.push('cannot sell entire balance');
+    if (gp.is_blacklisted === '1') out.flags.push('has a blacklist function');
+    if (gp.is_mintable === '1') out.flags.push('supply is mintable');
+    if (gp.transfer_pausable === '1') out.flags.push('transfers can be paused');
+    if (gp.is_open_source === '0') out.flags.push('source NOT verified');
+    else if (gp.is_open_source === '1') out.good.push('source verified');
+    if (gp.owner_address && /^0x0{40}$/.test(gp.owner_address)) out.good.push('ownership renounced');
+    if (gp.holder_count) out.holders = Number(gp.holder_count);
   }
 
-  // 5. our own thresholds on the holder snapshot
-  if (out.stats) {
-    const s = out.stats;
-    if (Number.isFinite(s.top10) && s.top10 > 50) out.flags.push(`top-10 hold ${Math.round(s.top10)}%`);
-    if (Number.isFinite(s.snipers) && s.snipers > 30) out.flags.push(`snipers ${Math.round(s.snipers)}%`);
-    if (Number.isFinite(s.dev) && s.dev > 20) out.flags.push(`dev holds ${Math.round(s.dev)}%`);
-    if (Number.isFinite(s.holders) && s.holders < 50) out.flags.push(`only ${s.holders} holders`);
-    if (Number.isFinite(s.holders) && s.holders >= 300) out.good.push(`${s.holders} holders`);
-    if (Number.isFinite(s.top10) && s.top10 <= 30) out.good.push(`top-10 ${Math.round(s.top10)}%`);
+  // basedbot's own holder structure — the only source for bundlers/snipers.
+  if (metrics && metrics.data) {
+    const m = Object.entries(metrics.data).find(([k]) => k.toLowerCase().startsWith(addr.toLowerCase()));
+    if (m) {
+      const v = m[1] || {};
+      out.stats = {
+        holders: Number(v.holdersCount), top10: Number(v.top10HoldersPct),
+        insiders: Number(v.insidersPct), snipers: Number(v.snipersPct),
+        bundlers: Number(v.bundlersPct), dev: Number(v.devHoldingsPct)
+      };
+      const st = out.stats;
+      if (Number.isFinite(st.bundlers) && st.bundlers > 20) out.flags.push(`bundlers hold ${Math.round(st.bundlers)}%`);
+      if (Number.isFinite(st.snipers) && st.snipers > 30) out.flags.push(`snipers hold ${Math.round(st.snipers)}%`);
+      if (Number.isFinite(st.top10) && st.top10 > 50) out.flags.push(`top-10 hold ${Math.round(st.top10)}%`);
+      if (Number.isFinite(st.dev) && st.dev > 20) out.flags.push(`dev holds ${Math.round(st.dev)}%`);
+      if (Number.isFinite(st.top10) && st.top10 <= 30) out.good.push(`top-10 only ${Math.round(st.top10)}%`);
+      if (Number.isFinite(st.bundlers) && st.bundlers === 0) out.good.push('no bundlers');
+    }
+  } else {
+    out.notes.push('holder structure (bundlers/snipers) unavailable right now');
   }
+
+  // Name: is it unique, a rehash of an established ticker, or a replica of
+  // something we alerted in the last week?
+  const sym = String(out.symbol || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const nam = String(out.name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  if ((sym && MAJORS.has(sym)) || (nam && MAJORS.has(nam))) {
+    out.flags.push(`name reuses an established ticker (${out.symbol}) — rehash pattern`);
+  } else if (sym) out.good.push('name not a known-ticker rehash');
+  if (hasKw(`${sym} ${nam}`)) out.flags.push('meme-keyword name');
+  try {
+    const names = loadJson(NAMES_PATH, {});
+    const prior = names[sym] || names[nam];
+    if (prior && prior.addr && prior.addr.toLowerCase() !== addr.toLowerCase()) {
+      out.flags.push('a DIFFERENT contract used this name recently — replica risk');
+    }
+  } catch (e) { /* registry optional */ }
+
+  // Web presence, and whether the site is actually alive.
+  if (out.websites && out.websites.length) {
+    const peek = await withTimeout(sitePeek(out.websites[0]), 7000);
+    if (peek && peek.ok) {
+      out.good.push('website reachable');
+      if (peek.line) out.siteTitle = String(peek.line).slice(0, 100);
+    } else out.flags.push('website listed but unreachable');
+  } else if (!out.socials || !out.socials.length) {
+    out.flags.push('no website and no socials listed');
+  }
+
+  // Two-way flow, from DexScreener's own 24h split.
+  if (out.buys + out.sells >= 10) {
+    const sellShare = out.sells / (out.buys + out.sells);
+    if (sellShare < 0.1) out.flags.push(`one-way flow: ${out.buys} buys vs ${out.sells} sells (people are not getting out)`);
+    else out.good.push(`two-way flow (${out.buys} buys / ${out.sells} sells)`);
+  }
+  if (out.liq !== undefined && out.liq < 5000) out.flags.push(`thin liquidity $${Math.round(out.liq).toLocaleString()}`);
   return out;
 };
 
 const formatScan = (r) => {
   if (!r.chain) {
-    return `🔎 ${r.addr.slice(0, 10)}…\nNo contract code at this address on robinhood/base/ethereum/solana.\n` +
-      `Either it is a wallet, it is on a chain we do not watch, or the address is wrong.`;
+    return `🔎 ${r.addr.slice(0, 10)}…\nNo contract and no market found on the chains we watch.\n` +
+      `It may be a wallet, a chain we do not cover, or a mistyped address.`;
   }
-  const label = r.symbol ? `${r.symbol}${r.name ? ' — ' + r.name : ''}` : r.addr.slice(0, 12) + '…';
-  const verdict = r.flags.some((f) => /HONEYPOT|cannot sell|sell tax/i.test(f)) ? '⛔ DO NOT TOUCH'
+  const label = r.symbol ? `${r.symbol}${r.name && r.name !== r.symbol ? ' — ' + r.name : ''}` : r.addr.slice(0, 12) + '…';
+  const severe = r.flags.some((f) => /HONEYPOT|cannot sell|sell tax|one-way/i.test(f));
+  const verdict = severe ? '⛔ DO NOT TOUCH'
     : r.flags.length >= 3 ? '🔴 high risk'
       : r.flags.length ? '🟠 caution'
         : '🟢 nothing alarming found';
-  const s = r.stats;
-  const statLine = s && Number.isFinite(s.holders)
-    ? `top10 ${Math.round(s.top10)}% · dev ${Math.round(s.dev || 0)}% · snipers ${Math.round(s.snipers || 0)}% · insiders ${Math.round(s.insiders || 0)}% · ${s.holders} holders`
-    : 'no holder stats available for this token';
-  const alsoLine = (r.alsoOn && r.alsoOn.length)
-    ? `\n(code also exists at this address on ${r.alsoOn.join(', ')} — different contracts, check the chain you mean)` : '';
-  return `🔎 Contract scan — ${verdict}\n${label}  (${r.chain})${alsoLine}\n${statLine}\n` +
-    (r.flags.length ? `\n⚠️ ${r.flags.join('\n⚠️ ')}\n` : '') +
-    (r.good.length ? `✅ ${r.good.join(' · ')}\n` : '') +
-    `\nhttps://basedbot.app/token/${linkChain(r.chain)}/${r.addr}\n` +
-    `Read-only checks against chain data, basedbot and GoPlus. Absence of flags is not safety.`;
+  const money = [
+    r.fdv ? `mc $${Math.round(r.fdv).toLocaleString()}` : null,
+    r.liq !== undefined ? `liq $${Math.round(r.liq).toLocaleString()}` : null,
+    r.vol24 !== undefined ? `vol24 $${Math.round(r.vol24).toLocaleString()}` : null,
+    typeof r.change24 === 'number' ? `24h ${r.change24 > 0 ? '+' : ''}${r.change24}%` : null,
+    r.ageH !== null && r.ageH !== undefined ? `${r.ageH < 48 ? Math.round(r.ageH) + 'h' : Math.round(r.ageH / 24) + 'd'} old` : null
+  ].filter(Boolean).join(' · ');
+  const st = r.stats;
+  const holders = st && Number.isFinite(st.holders) ? st.holders : r.holders;
+  const structure = st
+    ? `top10 ${Math.round(st.top10)}% · dev ${Math.round(st.dev || 0)}% · snipers ${Math.round(st.snipers || 0)}% · bundlers ${Math.round(st.bundlers || 0)}% · insiders ${Math.round(st.insiders || 0)}%${holders ? ` · ${holders} holders` : ''}`
+    : (holders ? `${holders} holders` : '');
+  const web = [
+    r.websites && r.websites.length ? `🔗 ${r.websites[0]}` : null,
+    r.siteTitle ? `«${r.siteTitle}»` : null,
+    r.socials && r.socials.length ? r.socials.slice(0, 3).join('\n') : null
+  ].filter(Boolean).join('\n');
+  const talk = r.symbol
+    ? `💬 what people say: https://x.com/search?q=%24${encodeURIComponent(r.symbol)}`
+    : '';
+  return [
+    `🔎 ─── CONTRACT SCAN ───`,
+    verdict,
+    `${label}  (${r.chain})`,
+    money,
+    structure,
+    web,
+    r.flags.length ? `\n⚠️ ${r.flags.join('\n⚠️ ')}` : '',
+    r.good.length ? `✅ ${r.good.join(' · ')}` : '',
+    r.notes.length ? `ℹ️ ${r.notes.join(' · ')}` : '',
+    talk,
+    `https://basedbot.app/token/${linkChain(r.chain)}/${r.addr}`,
+    `Read-only checks: chain, DexScreener, GoPlus, basedbot. No flags ≠ safe.`
+  ].filter(Boolean).join('\n');
 };
 
 // -------------------------------------------------- call performance --------
@@ -1183,7 +1325,7 @@ const callWatch = async (marksByChain) => {
         dirty = true;
         const icon = m >= 5 ? '🔥' : '⚡';
         await sendTelegram(
-          `${icon} $${c.symbol} hit ${m}X\n` +
+          `${icon} ─── CALL UPDATE ───\n$${c.symbol} hit ${m}X\n` +
           `called ${fmtMc(c.calledMc)} → ${fmtMc(mc)}\n` +
           `peak since the call · dyor\n` +
           `https://basedbot.app/token/${linkChain(c.chain)}/${addr}`, null, 'quality');
@@ -1620,6 +1762,7 @@ setInterval(reloadAll, RELOAD_MS);
 setInterval(exitWatch, EXIT_CHECK_MS);
 setTimeout(refreshMajors, 20 * 1000);
 setInterval(refreshMajors, 24 * 3600 * 1000);
+if (ALPHA_ENABLED) { setTimeout(alphaWatch, 120 * 1000); setInterval(alphaWatch, ALPHA_CHECK_MS); }
 if (HOOKS_ENABLED) {
   setTimeout(hooksWatch, 90 * 1000);
   setInterval(hooksWatch, HOOKS_CHECK_MS);
