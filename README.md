@@ -40,6 +40,18 @@ rules, 🔥 gates, tax limit, take-profit thresholds, Telegram:
 
 ---
 
+## Two components, one version line
+
+This repo ships two things and they share a release number:
+
+- **The Chrome extension** (`src/`, `popup.*`, `manifest.json`) — the feed filter,
+  the discipline banner, the hook database.
+- **The VPS watcher** (`vps-watcher/`) — the 24/7 Telegram alert engine.
+
+A release may change only one of them. The popup shows `manifest.json`'s version,
+which is bumped on every release so you can always tell whether your pull landed,
+even when the change was watcher-side. Release notes say which component moved.
+
 ## Install (2 minutes)
 
 1. Download the latest release, or clone this repo. Unzip somewhere
