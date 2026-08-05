@@ -60,6 +60,9 @@ const linkChain = (c) => LINK_SLUG[c] || c;
 // address: 25 different contracts called "ELE" crossed the band in 24h and
 // each one fired. Address-level dedupe cannot see that; name-level can.
 const NAME_DEDUPE_MS = (config.nameDedupeHours || 12) * 3600 * 1000;
+// Firehose admission: a momentum coin with no web presence still earns a slot
+// if the turnover is real. Below this, with no utility signal, it is noise.
+const FIREHOSE_MIN_VOL_USD = config.firehoseMinVolUsd || 75000;
 const INTERVAL_MS = (config.intervalSec || 30) * 1000;
 const RELOAD_MS = (config.reloadMin || 30) * 60 * 1000;
 const TG_TOKEN = config.tgToken || '';
@@ -243,7 +246,7 @@ const onchainHooksScan = async () => {
           `(${hookInfo ? hookInfo.pools : 1} pool${hookInfo && hookInfo.pools !== 1 ? 's' : ''} total)\n${named}\n` +
           `Hook contract: ${c.explorer}${p.hook}\n` +
           `Fresh + own mechanism + real flow — the shape SATO/uPEG had at hour one. Check the mechanism before the chart.`,
-          null, 'firehose');
+          null, 'quality');
         console.log(`[watcher] hooked-launch alert: ${chain} pool ${poolId.slice(0, 12)} (${p.swaps} swaps)`);
       }
       // prune hooks that aged out without ever alerting (registry stays small)
@@ -1203,6 +1206,20 @@ const tick = async () => {
             flags.push(hookWhy === 'name'
               ? '🪝 hook mechanism in the token name'
               : '🪝 the project describes a hook mechanism');
+          }
+          // Firehose is the FIRST filter, not the overflow bin: utility
+          // evidence, possible gems, or genuine volume — from any chain we
+          // track. A momentum crossing with neither a web presence nor real
+          // turnover is exactly the meme noise that made the channel 80% junk,
+          // so it is dropped rather than routed.
+          const hasUtility = x.card.titles.some((t) => UTILITY_TITLES.includes(t));
+          const volUsd = moneyNum(x.card.vol) || 0;
+          const bigVolume = volUsd >= FIREHOSE_MIN_VOL_USD;
+          if (x.tier === 'band' && !hasUtility && !bigVolume && !hookWhy) {
+            seen[key] = { ts: Date.now(), skipped: 'no-utility-no-volume' };
+            saveJson(SEEN_PATH, seen);
+            console.log(`[watcher] dropped band ${x.card.symbol}: no utility, vol $${Math.round(volUsd / 1000)}K`);
+            continue;
           }
           let dest = 'firehose';
           if (x.tier === 'hot' || x.tier === 'watch') dest = 'quality';

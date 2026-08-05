@@ -48,3 +48,27 @@ const CHAIN_TIERS = { robinhood: ['hot','gem','band','fresh','watch'], solana: [
 assert.equal(CHAIN_TIERS.solana.includes('band'), false, 'no meme band lane on solana');
 assert.equal(CHAIN_TIERS.robinhood.includes('band'), true);
 console.log('chain policy: 2/2 ✓');
+
+// ---- firehose admission: utility OR real volume, else dropped --------------
+const UTILITY_TITLES = ['Website', 'GitHub', 'Docs', 'MCP', 'Discord', 'Medium', 'YouTube'];
+const FIREHOSE_MIN_VOL_USD = 75000;
+const moneyNum = (t) => { const m = (t||'').replace(/[$,]/g,'').match(/^([\d.]+)([KMB])?$/i); if(!m) return null;
+  const u = { K:1e3, M:1e6, B:1e9 }[(m[2]||'').toUpperCase()] || 1; return Number(m[1])*u; };
+const admit = (card, tier, hookWhy) => {
+  const hasUtility = card.titles.some((t) => UTILITY_TITLES.includes(t));
+  const bigVolume = (moneyNum(card.vol) || 0) >= FIREHOSE_MIN_VOL_USD;
+  if (tier === 'band' && !hasUtility && !bigVolume && !hookWhy) return 'dropped';
+  return 'firehose';
+};
+// the meme noise that made the channel 80% junk
+assert.equal(admit({ titles: [], vol: '$12.0K' }, 'band', null), 'dropped');
+assert.equal(admit({ titles: ['Telegram'], vol: '$3.0K' }, 'band', null), 'dropped');
+// earns a slot on real turnover
+assert.equal(admit({ titles: [], vol: '$230.9K' }, 'band', null), 'firehose');
+// or on utility evidence
+assert.equal(admit({ titles: ['Website'], vol: '$5.0K' }, 'band', null), 'firehose');
+// or because its pitch is a hook mechanism
+assert.equal(admit({ titles: [], vol: '$1.0K' }, 'band', 'site'), 'firehose');
+// non-band tiers are already utility-gated upstream and always pass
+assert.equal(admit({ titles: [], vol: '$0' }, 'fresh', null), 'firehose');
+console.log('firehose admission: 6/6 ✓');
