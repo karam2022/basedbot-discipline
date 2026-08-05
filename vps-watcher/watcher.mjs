@@ -320,6 +320,17 @@ const onchainHooksScan = async () => {
   saveJson(HOOK_REGISTRY_PATH, reg);
 };
 
+// One scan per address per 10 minutes — re-pastes and quote-replies are common.
+const scanSeen = new Map();
+const scanCooldown = (addr) => {
+  const k = addr.toLowerCase();
+  const last = scanSeen.get(k) || 0;
+  if (Date.now() - last < 600000) return true;
+  scanSeen.set(k, Date.now());
+  if (scanSeen.size > 500) scanSeen.clear();
+  return false;
+};
+
 let hooksLatest = []; // last scored list, for /hooks
 const hooksWatch = async () => {
   if (!HOOKS_ENABLED) return;
@@ -409,6 +420,7 @@ const CMD_LIST = [
   { command: 'watchlist', description: 'Show your watchwords' },
   { command: 'hooks', description: 'Young Uniswap v4 hooks gaining traction (ETH)' },
   { command: 'scoreboard', description: 'How every call actually performed (median, not highlights)' },
+  { command: 'scan', description: 'Audit a contract — /scan 0x… (or just paste one)' },
   { command: 'tracking', description: 'Bind THIS chat as the Tracking channel' },
   { command: 'firehose', description: 'Bind THIS chat as the Firehose channel' },
   { command: 'quality', description: 'Bind THIS chat as the Quality channel' }
@@ -432,6 +444,10 @@ const HELP_TEXT = (role, extra = '') => `🤖 BasedBot — what I can do
 
 📊 CALLS
 /scoreboard — what every call did, median included
+
+🔎 CONTRACT SCAN
+/scan 0x… — audit a token. Or just paste an address in this chat
+and I will check it: holders, taxes, honeypot, rehash, verified source.
 ${extra ? '\n' + extra + '\n' : ''}
 ⚙️ SETUP — run inside the chat you want it to be
 /tracking · /firehose · /quality
@@ -563,6 +579,14 @@ const pollUpdatesInner = async () => {
           : '📍 Nothing tracked yet. Press 📍 Track on an alert, or /track 0x…');
         continue;
       }
+      if (cmd === '/scan') {
+        const a = (args[0] || '').match(/0x[a-fA-F0-9]{40}/);
+        if (!a) { await reply('Usage: /scan 0x… (a token contract address)'); continue; }
+        await reply('🔎 Scanning…');
+        try { await reply(formatScan(await scanAddress(a[0]))); }
+        catch (e) { await reply(`Scan failed: ${String(e.message).slice(0, 120)}`); }
+        continue;
+      }
       if (cmd === '/scoreboard') {
         const calls = Object.values(loadJson(CALLS_PATH, {}));
         if (!calls.length) { await reply('📊 No calls recorded yet.'); continue; }
@@ -610,6 +634,23 @@ const pollUpdatesInner = async () => {
         const words = loadJson(WATCH_PATH, {});
         await reply(`🔔 Watchwords: ${Object.keys(words).join(', ') || '(none — add with /watch TOKEN)'}`);
         continue;
+      }
+    }
+    // Someone pasted a bare contract address in a bound chat: audit it without
+    // being asked. Raw text only — never follow links, never sign anything.
+    if (u.message && u.message.chat && !txt.startsWith('/')) {
+      const fromChat = String(u.message.chat.id);
+      const bound = [tgChatId, tgFirehoseChatId, tgTrackingChatId, tgQualityChatId]
+        .some((id) => id && fromChat === String(id));
+      const hit = (u.message.text || '').match(/0x[a-fA-F0-9]{40}/);
+      if (bound && hit && !scanCooldown(hit[0])) {
+        const reply = (text) => tg('sendMessage', {
+          chat_id: u.message.chat.id, text, disable_web_page_preview: true,
+          reply_to_message_id: u.message.message_id
+        });
+        console.log(`[watcher] auto-scan requested for ${hit[0].slice(0, 12)}…`);
+        try { await reply(formatScan(await scanAddress(hit[0]))); }
+        catch (e) { console.error('[watcher] auto-scan failed', e.message.slice(0, 80)); }
       }
     }
     if (u.message && u.message.chat && txt.split('@')[0] === '/quality') {
@@ -967,6 +1008,135 @@ const alertToken = async (chain, card, tier, extra = '', dest = 'quality') => {
     recordCall(chain, card, tier);
   }
   return ok;
+};
+
+// ------------------------------------------------------ contract scanner ----
+// Anyone in a bound chat can paste a contract address and get an audit back.
+// Read-only: chain detection by bytecode, basedbot's own metrics, GoPlus token
+// security, and our own rehash/meme rules. Never signs anything.
+const GOPLUS_CHAIN = { robinhood: '4663', base: '8453', ethereum: '1', bsc: '56', solana: 'solana' };
+
+const scanAddress = async (addr) => {
+  const out = { addr, chain: null, codeSize: 0, stats: null, goplus: null, flags: [], good: [] };
+
+  // 1. Which chain? The SAME address can hold different contracts on different
+  //    chains (verified: a known Ethereum token also has code at that address
+  //    on Base), so taking the first hit reports the wrong token's data.
+  //    Collect every chain with code, then prefer the one basedbot actually
+  //    indexes as a token — that is the one the pasted address means.
+  const present = [];
+  for (const [chain, c] of Object.entries(HOOK_RPCS)) {
+    try {
+      const code = await rpcCall(c.url, 'eth_getCode', [addr, 'latest']);
+      const size = (code.length - 2) / 2;
+      if (size > 0) present.push({ chain, size });
+    } catch (e) { /* chain unreachable — do not guess */ }
+  }
+  if (!present.length) { out.flags.push('no contract code found on any chain we watch'); return out; }
+  let best = null;
+  for (const p of present) {
+    try {
+      const meta = await fetchMetadata(p.chain, [addr]);
+      const m = meta[addr.toLowerCase()];
+      if (m && (m.symbol || m.name)) { best = { ...p, meta: m }; break; }
+    } catch (e) { /* keep looking */ }
+  }
+  const chosen = best || present[0];
+  out.chain = chosen.chain;
+  out.codeSize = chosen.size;
+  out.alsoOn = present.filter((p) => p.chain !== out.chain).map((p) => p.chain);
+  if (!best) out.flags.push('not indexed as a token by basedbot on any of these chains');
+
+  // 2. basedbot's own numbers (the same ones the alerts use)
+  try {
+    const res = await fetchTrackedMetrics(out.chain, [addr]);
+    if (res && res.data) {
+      const m = Object.entries(res.data).find(([k]) => k.toLowerCase().startsWith(addr.toLowerCase()));
+      if (m) {
+        const v = m[1] || {};
+        out.stats = {
+          holders: Number(v.holdersCount), top10: Number(v.top10HoldersPct),
+          insiders: Number(v.insidersPct), snipers: Number(v.snipersPct), dev: Number(v.devHoldingsPct)
+        };
+      }
+    }
+  } catch (e) { /* metrics unavailable */ }
+
+  // 3. name/symbol → rehash + meme rules
+  try {
+    const m = (best && best.meta) || (await fetchMetadata(out.chain, [addr]))[addr.toLowerCase()];
+    if (m) {
+      out.symbol = m.symbol || '';
+      out.name = m.name || '';
+      const sym = String(out.symbol).toLowerCase().replace(/[^a-z0-9]/g, '');
+      const nam = String(out.name).toLowerCase().replace(/[^a-z0-9]/g, '');
+      if ((sym && MAJORS.has(sym)) || (nam && MAJORS.has(nam))) {
+        out.flags.push(`name reuses an established ticker (${out.symbol}) — rehash pattern`);
+      }
+      if (hasKw(`${sym} ${nam}`)) out.flags.push('meme-keyword name');
+    }
+  } catch (e) { /* metadata unavailable */ }
+
+  // 4. GoPlus token security (free, keyless). Thin on Robinhood Chain but rich
+  //    on ETH/Base — the honeypot and tax fields are the ones that matter.
+  const gp = GOPLUS_CHAIN[out.chain];
+  if (gp) {
+    try {
+      const r = await fetch(`https://api.gopluslabs.io/api/v1/token_security/${gp}?contract_addresses=${addr}`);
+      const j = await r.json();
+      const t = Object.values((j && j.result) || {})[0];
+      if (t) {
+        out.goplus = t;
+        const pct = (x) => (x === undefined || x === null || x === '' ? null : Number(x) * 100);
+        if (t.is_honeypot === '1') out.flags.push('GoPlus: HONEYPOT');
+        const sell = pct(t.sell_tax), buy = pct(t.buy_tax);
+        if (sell !== null && sell >= 20) out.flags.push(`sell tax ${sell.toFixed(0)}%`);
+        if (buy !== null && buy >= 20) out.flags.push(`buy tax ${buy.toFixed(0)}%`);
+        if (t.cannot_sell_all === '1') out.flags.push('cannot sell all');
+        if (t.is_blacklisted === '1') out.flags.push('blacklist function');
+        if (t.is_mintable === '1') out.flags.push('mintable supply');
+        if (t.transfer_pausable === '1') out.flags.push('transfers pausable');
+        if (t.is_open_source === '0') out.flags.push('source NOT verified');
+        else if (t.is_open_source === '1') out.good.push('source verified');
+        if (t.owner_address && /^0x0{40}$/.test(t.owner_address)) out.good.push('ownership renounced');
+      }
+    } catch (e) { /* goplus unavailable */ }
+  }
+
+  // 5. our own thresholds on the holder snapshot
+  if (out.stats) {
+    const s = out.stats;
+    if (Number.isFinite(s.top10) && s.top10 > 50) out.flags.push(`top-10 hold ${Math.round(s.top10)}%`);
+    if (Number.isFinite(s.snipers) && s.snipers > 30) out.flags.push(`snipers ${Math.round(s.snipers)}%`);
+    if (Number.isFinite(s.dev) && s.dev > 20) out.flags.push(`dev holds ${Math.round(s.dev)}%`);
+    if (Number.isFinite(s.holders) && s.holders < 50) out.flags.push(`only ${s.holders} holders`);
+    if (Number.isFinite(s.holders) && s.holders >= 300) out.good.push(`${s.holders} holders`);
+    if (Number.isFinite(s.top10) && s.top10 <= 30) out.good.push(`top-10 ${Math.round(s.top10)}%`);
+  }
+  return out;
+};
+
+const formatScan = (r) => {
+  if (!r.chain) {
+    return `🔎 ${r.addr.slice(0, 10)}…\nNo contract code at this address on robinhood/base/ethereum/solana.\n` +
+      `Either it is a wallet, it is on a chain we do not watch, or the address is wrong.`;
+  }
+  const label = r.symbol ? `${r.symbol}${r.name ? ' — ' + r.name : ''}` : r.addr.slice(0, 12) + '…';
+  const verdict = r.flags.some((f) => /HONEYPOT|cannot sell|sell tax/i.test(f)) ? '⛔ DO NOT TOUCH'
+    : r.flags.length >= 3 ? '🔴 high risk'
+      : r.flags.length ? '🟠 caution'
+        : '🟢 nothing alarming found';
+  const s = r.stats;
+  const statLine = s && Number.isFinite(s.holders)
+    ? `top10 ${Math.round(s.top10)}% · dev ${Math.round(s.dev || 0)}% · snipers ${Math.round(s.snipers || 0)}% · insiders ${Math.round(s.insiders || 0)}% · ${s.holders} holders`
+    : 'no holder stats available for this token';
+  const alsoLine = (r.alsoOn && r.alsoOn.length)
+    ? `\n(code also exists at this address on ${r.alsoOn.join(', ')} — different contracts, check the chain you mean)` : '';
+  return `🔎 Contract scan — ${verdict}\n${label}  (${r.chain})${alsoLine}\n${statLine}\n` +
+    (r.flags.length ? `\n⚠️ ${r.flags.join('\n⚠️ ')}\n` : '') +
+    (r.good.length ? `✅ ${r.good.join(' · ')}\n` : '') +
+    `\nhttps://basedbot.app/token/${linkChain(r.chain)}/${r.addr}\n` +
+    `Read-only checks against chain data, basedbot and GoPlus. Absence of flags is not safety.`;
 };
 
 // -------------------------------------------------- call performance --------
