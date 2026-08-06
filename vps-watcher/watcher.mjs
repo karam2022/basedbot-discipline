@@ -66,6 +66,11 @@ const esc = (t) => String(t ?? '')
 // address: 25 different contracts called "ELE" crossed the band in 24h and
 // each one fired. Address-level dedupe cannot see that; name-level can.
 const NAME_DEDUPE_MS = (config.nameDedupeHours || 12) * 3600 * 1000;
+// 💎/🔥 substance floors — clean stats on a 12-minute-old $2K token are not a
+// gem, they are an absence of history. Learned from calling `hue` at $23K.
+const GEM_MIN_AGE_MIN = config.gemMinAgeMin || 45;
+const GEM_MIN_MC_USD = config.gemMinMcUsd || 40000;
+const GEM_MIN_VOL_USD = config.gemMinVolUsd || 15000;
 // Firehose admission: a momentum coin with no web presence still earns a slot
 // if the turnover is real. Below this, with no utility signal, it is noise.
 const FIREHOSE_MIN_VOL_USD = config.firehoseMinVolUsd || 75000;
@@ -1003,7 +1008,7 @@ const UTILITY_WORDS = /\b(protocol|infrastructure|platform|network|api|sdk|docs|
 
 const TIERS = {
   hot: { head: '🔥 Best guess', body: 'passes every safety metric with real utility signals.' },
-  gem: { head: '💎 Possible gem', body: 'passes every safety metric, has a website, thinner proof — DYOR.' },
+  gem: { head: '💎 Possible gem', body: (c) => `passes every safety metric, has a website, and has held ${c.age || 'a while'} with real turnover — thinner proof than 🔥, DYOR.` },
   band: { head: '🚀 Momentum', body: (c) => `entered the $${Math.round(BAND_MIN / 1000)}K–$${Math.round(BAND_MAX / 1000)}K band${hasKw(c.blob) ? ' (meme — you asked for these too)' : ''}.` },
   fresh: { head: '🌱 New utility launch', body: 'brand-new, real web presence, not a name-replica. Stats may be raw — size accordingly.' },
   watch: { head: '🔔 Watchword hit', body: (c) => `matches your watchword "${c.watchWord}". Official token may not be live yet — fakes launch first. Verify against the project's own socials before touching it.` }
@@ -1656,8 +1661,23 @@ const tick = async () => {
             break;
           }
         }
-        if (safe && !kw && score >= 2) tiers.push('hot');
-        else if (safe && !kw && card.titles.includes('Website')) tiers.push('gem');
+        // 💎 needs SUBSTANCE, not just clean stats. A token minutes old has a
+        // flat holder distribution because nothing has had time to concentrate
+        // — passing the safety gates then means almost nothing. The same trap
+        // as counting swaps on a honeypot: a metric that is free to satisfy is
+        // not evidence. So a gem must also have survived a while, carry real
+        // liquidity, and show actual turnover.
+        const volN = moneyNum(card.vol);
+        const substantial = age !== null && age >= GEM_MIN_AGE_MIN &&
+          mcUsd !== null && mcUsd >= GEM_MIN_MC_USD &&
+          volN !== null && volN >= GEM_MIN_VOL_USD;
+        if (safe && !kw && score >= 2 && substantial) tiers.push('hot');
+        else if (safe && !kw && card.titles.includes('Website') && substantial) tiers.push('gem');
+        else if (safe && !kw && card.titles.includes('Website') && !substantial &&
+          age !== null && age <= NEW_MAX_AGE_MIN) {
+          // clean but too young to judge — that is the 🌱 story, not 💎
+          tiers.push('fresh');
+        }
         if (mcUsd !== null && mcUsd >= BAND_MIN && mcUsd <= BAND_MAX) tiers.push('band');
         if (age !== null && age <= NEW_MAX_AGE_MIN && !kw && !replica &&
           card.titles.some((t) => UTILITY_TITLES.includes(t))) tiers.push('fresh');

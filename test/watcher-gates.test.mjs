@@ -72,3 +72,25 @@ assert.equal(admit({ titles: [], vol: '$1.0K' }, 'band', 'site'), 'firehose');
 // non-band tiers are already utility-gated upstream and always pass
 assert.equal(admit({ titles: [], vol: '$0' }, 'fresh', null), 'firehose');
 console.log('firehose admission: 6/6 ✓');
+
+// ---- 💎 needs substance, not just clean stats ------------------------------
+const GEM_MIN_AGE_MIN = 45, GEM_MIN_MC_USD = 40000, GEM_MIN_VOL_USD = 15000;
+const NEW_MAX_AGE_MIN = 60;
+const tierOf = ({ safe, kw, website, score, ageMin, mc, vol }) => {
+  const substantial = ageMin !== null && ageMin >= GEM_MIN_AGE_MIN &&
+    mc !== null && mc >= GEM_MIN_MC_USD && vol !== null && vol >= GEM_MIN_VOL_USD;
+  if (safe && !kw && score >= 2 && substantial) return 'hot';
+  if (safe && !kw && website && substantial) return 'gem';
+  if (safe && !kw && website && !substantial && ageMin !== null && ageMin <= NEW_MAX_AGE_MIN) return 'fresh';
+  return null;
+};
+// the exact shape of the bad call: clean stats, website, but 12 minutes old and tiny
+assert.equal(tierOf({ safe: true, kw: false, website: true, score: 1, ageMin: 12, mc: 23000, vol: 49600 }), 'fresh',
+  'a 12-minute-old $23K token is a NEW LISTING, never a gem');
+// same token once it has actually survived and traded
+assert.equal(tierOf({ safe: true, kw: false, website: true, score: 1, ageMin: 90, mc: 120000, vol: 60000 }), 'gem');
+// substance without utility evidence is not promoted
+assert.equal(tierOf({ safe: true, kw: false, website: false, score: 1, ageMin: 90, mc: 120000, vol: 60000 }), null);
+// real turnover missing → not a gem even if old and mid-cap
+assert.equal(tierOf({ safe: true, kw: false, website: true, score: 1, ageMin: 90, mc: 120000, vol: 200 }), null);
+console.log('gem substance: 4/4 ✓');
