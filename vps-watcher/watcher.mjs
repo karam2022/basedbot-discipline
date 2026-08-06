@@ -56,6 +56,12 @@ const CHAIN_TIERS = config.chainTiers || {
 // basedbot's token URLs use a different slug than its pulse path on Solana.
 const LINK_SLUG = { solana: 'sol' };
 const linkChain = (c) => LINK_SLUG[c] || c;
+
+// Telegram HTML mode gives us <b>, <code>, <a> and blockquotes — but token
+// names, site descriptions and community comments are all written by strangers,
+// so nothing interpolated may reach the parser unescaped.
+const esc = (t) => String(t ?? '')
+  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 // A name that already alerted recently must not alert again under a NEW
 // address: 25 different contracts called "ELE" crossed the band in 24h and
 // each one fired. Address-level dedupe cannot see that; name-level can.
@@ -605,7 +611,7 @@ const pollUpdatesInner = async () => {
           const res = await withTimeout(scanAddress(a[0]), 25000);
           if (!res) { await reply(`🔎 ${a[0].slice(0, 12)}… — scan timed out, sources were slow. Try again shortly.`); continue; }
           await tg('sendMessage', {
-            chat_id: u.message.chat.id, text: formatScan(res), parse_mode: 'Markdown',
+            chat_id: u.message.chat.id, text: formatScan(res), parse_mode: 'HTML',
             disable_web_page_preview: true, reply_markup: { inline_keyboard: scanButtons(res) || [] }
           });
         } catch (e) { await reply(`Scan failed: ${String(e.message).slice(0, 120)}`); }
@@ -677,7 +683,7 @@ const pollUpdatesInner = async () => {
           const res = await withTimeout(scanAddress(hit[0]), 25000);
           if (res) {
             await tg('sendMessage', {
-              chat_id: u.message.chat.id, text: formatScan(res), parse_mode: 'Markdown',
+              chat_id: u.message.chat.id, text: formatScan(res), parse_mode: 'HTML',
               disable_web_page_preview: true, reply_to_message_id: u.message.message_id,
               reply_markup: { inline_keyboard: scanButtons(res) || [] }
             });
@@ -1086,23 +1092,35 @@ const alphaWatch = async () => {
       sent += 1;
 
       const entryFol = Number((row.entry || {}).fol);
-      const growth = Number.isFinite(entryFol) && entryFol > 0 && fol > entryFol
-        ? `${entryFol.toLocaleString()} → ${fol.toLocaleString()} followers (${Math.round(fol / entryFol)}x since spotted)`
-        : `${fol.toLocaleString()} followers`;
       const bios = [...new Set(row.bios || [])].slice(0, 3).join(' · ');
-      const said = (row.thread || []).filter((t) => t && t.body && !t.deleted).slice(0, 2)
-        .map((t) => `  “${String(t.body).replace(/\s+/g, ' ').slice(0, 140)}” — @${t.xUsername || t.author}`);
+      const growthTree = Number.isFinite(entryFol) && entryFol > 0 && fol > entryFol
+        ? `📈 <b>${fol.toLocaleString()}</b> followers\n` +
+          `   ├ first seen at <b>${entryFol.toLocaleString()}</b>\n` +
+          `   └ <b>${Math.round(fol / entryFol).toLocaleString()}×</b> since we spotted it`
+        : `📈 <b>${fol.toLocaleString()}</b> followers`;
+      const said = (row.thread || []).filter((t) => t && t.body && !t.deleted).slice(0, 3)
+        .map((t) => `“${esc(String(t.body).replace(/\s+/g, ' ').slice(0, 180))}”\n— @${esc(t.xUsername || t.author)}`);
 
-      await sendTelegram([
-        '🐦 ─── NEW ON THE RADAR ───',
-        `${row.name || handle}  ·  @${handle}`,
-        growth,
-        row.summary ? `“${String(row.summary).slice(0, 160)}”` : '',
-        bios ? `tags: ${bios}` : '',
-        said.length ? `\n💬 people are saying:\n${said.join('\n')}` : '',
-        `\nhttps://x.com/${handle}`,
-        'Surfaced by purealpha · an account is not a token. Find what they ship before you buy anything.'
-      ].filter(Boolean).join('\n'), null, 'firehose');
+      const html = [
+        '🐦 <b>NEW PROJECT ON THE RADAR</b>',
+        `<b>${esc(row.name || handle)}</b>  ·  <a href="https://x.com/${encodeURIComponent(handle)}">@${esc(handle)}</a>`,
+        row.summary ? `\n<blockquote>${esc(String(row.summary).slice(0, 220))}</blockquote>` : '',
+        `\n${growthTree}`,
+        bios ? `🏷 <i>${esc(bios)}</i>` : '',
+        said.length
+          ? `\n💬 <b>what people are saying</b>\n<blockquote expandable>${said.join('\n\n')}</blockquote>`
+          : '',
+        `\n<i>Surfaced by purealpha · an account is not a token. Find what they ship before you buy anything.</i>`
+      ].filter(Boolean).join('\n');
+
+      await tg('sendMessage', {
+        chat_id: tgFirehoseChatId || tgChatId, text: html, parse_mode: 'HTML',
+        disable_web_page_preview: true,
+        reply_markup: { inline_keyboard: [[
+          { text: '𝕏 Open profile', url: `https://x.com/${handle}` },
+          { text: '🔎 Their posts', url: `https://x.com/search?q=from%3A${encodeURIComponent(handle)}` }
+        ]] }
+      });
       console.log(`[watcher] alpha radar: @${handle} (${fol} followers, ${row.kind})`);
     }
     // keep the seen-map from growing without bound
@@ -1287,9 +1305,9 @@ const scanButtons = (r) => {
 
 const formatScan = (r) => {
   if (!r.chain) {
-    return `🔎 ─── CONTRACT SCAN ───\n${r.addr.slice(0, 10)}…\n\n` +
+    return `🔎 <b>CONTRACT SCAN</b>\n<code>${esc(r.addr)}</code>\n\n` +
       `No contract and no market found on the chains we watch.\n` +
-      `Likely a wallet, a chain we do not cover, or a mistyped address.`;
+      `<i>Likely a wallet, a chain we do not cover, or a mistyped address.</i>`;
   }
   const money = (n) => {
     if (!Number.isFinite(n) || n === 0) return '—';
@@ -1298,63 +1316,81 @@ const formatScan = (r) => {
     if (n >= 1e3) return `$${(n / 1e3).toFixed(1)}K`;
     return `$${n.toFixed(2)}`;
   };
-  const pc = (x) => (Number.isFinite(x) ? `${x > 0 ? '+' : ''}${x}%` : '—');
+  const pc = (x) => {
+    if (!Number.isFinite(x)) return '—';
+    return `${x > 0 ? '+' : ''}${x}%`;
+  };
   const age = r.ageH === null || r.ageH === undefined ? '—'
     : r.ageH < 24 ? `${Math.round(r.ageH)}h` : `${Math.round(r.ageH / 24)}d`;
 
   const severe = r.flags.some((f) => /HONEYPOT|cannot sell|sell tax|one-way/i.test(f));
-  const verdict = severe ? '⛔ DO NOT TOUCH'
-    : r.flags.length >= 3 ? '🔴 HIGH RISK'
-      : r.flags.length ? '🟠 CAUTION'
-        : '🟢 NOTHING ALARMING';
+  const verdict = severe ? '⛔ <b>DO NOT TOUCH</b>'
+    : r.flags.length >= 3 ? '🔴 <b>HIGH RISK</b>'
+      : r.flags.length ? '🟠 <b>CAUTION</b>'
+        : '🟢 <b>NOTHING ALARMING</b>';
 
   const L = [];
-  L.push('🔎 ─── CONTRACT SCAN ───');
-  L.push(`📌 ${r.symbol || r.addr.slice(0, 10)}${r.name && r.name !== r.symbol ? ` | ${r.name}` : ''}  |  ${verdict}`);
-  L.push(`🔶 ${r.chain}${r.dex ? ` · ${r.dex}` : ''}${r.quote ? ` · vs ${r.quote}` : ''}  |  ⚖️ age ${age}`);
-  L.push('');
+  L.push('🔎 <b>CONTRACT SCAN</b>');
+  L.push(`<b>${esc(r.symbol || r.addr.slice(0, 10))}</b>${r.name && r.name !== r.symbol ? ` · ${esc(r.name)}` : ''}`);
+  L.push(`${verdict}   <i>${esc(r.chain)}${r.dex ? ' · ' + esc(r.dex) : ''} · ${age} old</i>`);
 
-  // money block
-  const liqPct = r.mc > 0 && r.liq ? ` (${Math.round((r.liq / r.mc) * 100)}% of MC)` : '';
-  L.push(`💰 MC ${money(r.mc)}  |  Liq ${money(r.liq)}${liqPct}`);
-  if (r.price) L.push(`💲 Price $${Number(r.price) < 0.01 ? Number(r.price).toFixed(10).replace(/0+$/, '') : Number(r.price).toFixed(6)}`);
-  const taxLine = r.taxB !== undefined || r.taxS !== undefined
-    ? `💳 Tax  B:${r.taxB ?? '?'}%  S:${r.taxS ?? '?'}%${r.honeypot === false ? '  |  ✅ not a honeypot' : ''}`
-    : null;
-  if (taxLine) L.push(taxLine);
-  L.push('');
+  // market block — liquidity as a share of MC is the fastest read on float
+  const liqPct = r.mc > 0 && r.liq ? ` <i>(${Math.round((r.liq / r.mc) * 100)}% of MC)</i>` : '';
+  const market = [
+    `├ MC     <b>${money(r.mc)}</b>`,
+    `├ Liq    <b>${money(r.liq)}</b>${liqPct}`,
+    r.price ? `├ Price  <code>$${Number(r.price) < 0.01 ? Number(r.price).toFixed(10).replace(/0+$/, '') : Number(r.price).toFixed(6)}</code>` : null,
+    (r.taxB !== undefined || r.taxS !== undefined)
+      ? `└ Tax    B <b>${r.taxB ?? '?'}%</b> · S <b>${r.taxS ?? '?'}%</b>${r.honeypot === false ? '  ✅' : ''}`
+      : `└ Tax    <i>unknown</i>`
+  ].filter(Boolean).join('\n');
+  L.push(`\n💰 <b>MARKET</b>\n<blockquote>${market}</blockquote>`);
 
-  // movement block — the multi-window view the good bots all show
+  // movement
   const c = r.change || {};
-  L.push(`📈 5m ${pc(c.m5)}  ·  1h ${pc(c.h1)}  ·  6h ${pc(c.h6)}  ·  24h ${pc(c.h24)}`);
-  const totalTx = (r.buys || 0) + (r.sells || 0);
-  const sellPct = totalTx ? Math.round((r.sells / totalTx) * 100) : null;
-  L.push(`🔄 vol24 ${money((r.vol || {}).h24)}  |  B:${r.buys} S:${r.sells}${sellPct !== null ? ` (${sellPct}% sells)` : ''}`);
-  L.push('');
+  const total = (r.buys || 0) + (r.sells || 0);
+  const sellPct = total ? Math.round((r.sells / total) * 100) : null;
+  const move = [
+    `├ 5m ${pc(c.m5)}  ·  1h ${pc(c.h1)}  ·  6h ${pc(c.h6)}  ·  24h ${pc(c.h24)}`,
+    `├ vol 24h  <b>${money((r.vol || {}).h24)}</b>`,
+    `└ trades   <b>${r.buys}</b> buys · <b>${r.sells}</b> sells${sellPct !== null ? ` <i>(${sellPct}% sells)</i>` : ''}`
+  ].join('\n');
+  L.push(`\n📈 <b>MOVEMENT</b>\n<blockquote>${move}</blockquote>`);
 
-  // holder structure
+  // holders
   const st = r.stats;
   const holders = (st && Number.isFinite(st.holders)) ? st.holders : r.holders;
   if (st || holders) {
-    L.push(`👤 ${holders ? `${holders.toLocaleString()} holders` : 'holders —'}` +
-      (st ? `  |  top10 ${Math.round(st.top10)}%  ·  dev ${Math.round(st.dev || 0)}%` : ''));
-    if (st) L.push(`🎯 snipers ${Math.round(st.snipers || 0)}%  ·  bundlers ${Math.round(st.bundlers || 0)}%  ·  insiders ${Math.round(st.insiders || 0)}%`);
-    L.push('');
+    const rows = [
+      `├ holders  <b>${holders ? holders.toLocaleString() : '—'}</b>`,
+      st ? `├ top 10   <b>${Math.round(st.top10)}%</b>  ·  dev <b>${Math.round(st.dev || 0)}%</b>` : null,
+      st ? `└ snipers  <b>${Math.round(st.snipers || 0)}%</b>  ·  bundlers <b>${Math.round(st.bundlers || 0)}%</b>  ·  insiders <b>${Math.round(st.insiders || 0)}%</b>` : null
+    ].filter(Boolean).join('\n');
+    L.push(`\n👤 <b>HOLDERS</b>\n<blockquote>${rows}</blockquote>`);
   }
 
   // presence
-  if (r.websites && r.websites.length) L.push(`🔗 ${r.websites[0]}`);
-  if (r.siteTitle) L.push(`   «${r.siteTitle}»`);
-  if (r.socials && r.socials.length) L.push(`🐦 ${r.socials.slice(0, 2).map((x) => x.split(': ').slice(1).join(': ')).join('  ·  ')}`);
-  if (r.websites?.length || r.socials?.length || r.siteTitle) L.push('');
+  const pres = [];
+  if (r.websites && r.websites.length) pres.push(`├ <a href="${esc(r.websites[0])}">${esc(r.websites[0].replace(/^https?:\/\//, '').slice(0, 46))}</a>`);
+  if (r.siteTitle) pres.push(`├ <i>“${esc(r.siteTitle)}”</i>`);
+  for (const soc of (r.socials || []).slice(0, 2)) {
+    const url = soc.split(': ').slice(1).join(': ');
+    pres.push(`├ <a href="${esc(url)}">${esc(url.replace(/^https?:\/\/(www\.)?/, '').slice(0, 46))}</a>`);
+  }
+  if (pres.length) {
+    pres[pres.length - 1] = pres[pres.length - 1].replace('├', '└');
+    L.push(`\n🌐 <b>PRESENCE</b>\n<blockquote>${pres.join('\n')}</blockquote>`);
+  }
 
-  if (r.flags.length) { L.push(`⚠️ ${r.flags.join('\n⚠️ ')}`); L.push(''); }
-  if (r.good.length) { L.push(`✅ ${r.good.join('  ·  ')}`); L.push(''); }
-  if (r.notes.length) L.push(`ℹ️ ${r.notes.join('  ·  ')}`);
+  if (r.flags.length) {
+    L.push(`\n⚠️ <b>FLAGS</b>\n<blockquote${r.flags.length > 3 ? ' expandable' : ''}>${r.flags.map((f) => `• ${esc(f)}`).join('\n')}</blockquote>`);
+  }
+  if (r.good.length) L.push(`\n✅ <i>${esc(r.good.join(' · '))}</i>`);
+  if (r.notes.length) L.push(`ℹ️ <i>${esc(r.notes.join(' · '))}</i>`);
 
-  L.push(`\`${r.addr}\``);
-  L.push('DYOR · read-only checks (chain · DexScreener · GoPlus · basedbot). No flags ≠ safe.');
-  return L.filter((x, i, a) => !(x === '' && a[i - 1] === '')).join('\n');
+  L.push(`\n<code>${esc(r.addr)}</code>`);
+  L.push(`<i>DYOR · read-only: chain · DexScreener · GoPlus · basedbot. No flags ≠ safe.</i>`);
+  return L.join('\n');
 };
 
 // -------------------------------------------------- call performance --------
