@@ -74,7 +74,7 @@ assert.equal(admit({ titles: [], vol: '$0' }, 'fresh', null), 'firehose');
 console.log('firehose admission: 6/6 ✓');
 
 // ---- 💎 needs substance, not just clean stats ------------------------------
-const GEM_MIN_AGE_MIN = 45, GEM_MIN_MC_USD = 40000, GEM_MIN_VOL_USD = 15000;
+const GEM_MIN_AGE_MIN = 20, GEM_MIN_MC_USD = 40000, GEM_MIN_VOL_USD = 15000;
 const NEW_MAX_AGE_MIN = 60;
 const tierOf = ({ safe, kw, website, score, ageMin, mc, vol }) => {
   const substantial = ageMin !== null && ageMin >= GEM_MIN_AGE_MIN &&

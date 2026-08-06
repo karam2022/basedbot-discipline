@@ -68,7 +68,7 @@ const esc = (t) => String(t ?? '')
 const NAME_DEDUPE_MS = (config.nameDedupeHours || 12) * 3600 * 1000;
 // 💎/🔥 substance floors — clean stats on a 12-minute-old $2K token are not a
 // gem, they are an absence of history. Learned from calling `hue` at $23K.
-const GEM_MIN_AGE_MIN = config.gemMinAgeMin || 45;
+const GEM_MIN_AGE_MIN = config.gemMinAgeMin || 20;
 const GEM_MIN_MC_USD = config.gemMinMcUsd || 40000;
 const GEM_MIN_VOL_USD = config.gemMinVolUsd || 15000;
 // Firehose admission: a momentum coin with no web presence still earns a slot
