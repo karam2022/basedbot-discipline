@@ -146,7 +146,15 @@ BBD.AUDIT_DANGER_PENALTY = -5;
 
 BBD.STALE_MS = 30 * 60 * 1000;   // position data older than this is labeled stale
 BBD.SCAN_DEBOUNCE_MS = 300;
-BBD.POLL_MS = 5000;
+// Event-driven ticks (idea from PaperTrench's title feed): the page announces
+// its own re-renders — body mutations and <title> changes — so the PnL/banner
+// tick rides those with a trailing throttle instead of a fixed 5s poll.
+// Reaction when a position crosses TP/stop: ~1.2s worst-case instead of ~5s.
+// The poll survives only as a fallback for time-based state (snooze expiry,
+// refire windows) and pages that go quiet — so an idle tab now does 3x less
+// background work, not more.
+BBD.LIGHT_TICK_MS = 1200;
+BBD.POLL_MS = 15000;
 BBD.ROUTE_POLL_MS = 1000;
 BBD.BALANCES_TTL_MS = 2 * 60 * 1000;
 

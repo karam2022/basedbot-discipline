@@ -3,6 +3,7 @@
 
 (() => {
   let scanQueued = false;
+  let tickQueued = false;
   let lastPath = null;
   const intervals = [];
 
@@ -11,6 +12,7 @@
   const shutdown = () => {
     intervals.forEach(clearInterval);
     observer.disconnect();
+    titleObserver.disconnect();
     ['bbd-filter-chip', 'bbd-banner', 'bbd-refresh', 'bbd-intel', 'bbd-fomo', 'bbd-guard-revenge']
       .forEach((id) => document.getElementById(id)?.remove());
     document.querySelectorAll('.bbd-hidden, .bbd-gem, .bbd-hot, .bbd-baddev, .bbd-danger, .bbd-override, .bbd-cardintel')
@@ -53,6 +55,31 @@
     document.body.appendChild(btn);
   };
 
+  // The discipline tick: read positions first, THEN paint — so the banner
+  // reacts to the value the page just rendered, not to the previous tick's.
+  const lightTickRun = async () => {
+    await BBD.pnl.scan();
+    BBD.intel.scan();
+    BBD.banner.tick();
+    BBD.plans.tick();
+    BBD.guard.tick();
+  };
+
+  // Event-driven discipline (idea from PaperTrench's title feed): the page
+  // announces its own re-renders, so ride them with one trailing tick per
+  // throttle window instead of a fixed poll. The flag stays up until the
+  // async work settles, or two ticks interleave storage writes (same rule as
+  // the filter path below).
+  const queueLightTick = () => {
+    if (tickQueued) return;
+    tickQueued = true;
+    setTimeout(guard(() => {
+      lightTickRun().finally(() => {
+        tickQueued = false;
+      });
+    }), BBD.LIGHT_TICK_MS);
+  };
+
   // Throttled rescans while the live feed mutates. The feed mutates
   // continuously (price ticks), so a debounce that resets per mutation would
   // never fire — instead guarantee one trailing scan per throttle window.
@@ -60,6 +87,7 @@
   // scans run in parallel and toggle classes against each other (same ticking
   // pattern as the VPS watcher).
   const observer = new MutationObserver(() => {
+    queueLightTick();
     if (scanQueued) return;
     scanQueued = true;
     setTimeout(guard(() => {
@@ -70,6 +98,13 @@
   });
   observer.observe(document.body, { childList: true, subtree: true });
 
+  // The tab title is the cheapest change signal the site offers (symbol and
+  // live numbers land there) — a title flip means state changed, with no DOM
+  // traversal and no network. Observe it directly.
+  const titleObserver = new MutationObserver(queueLightTick);
+  const titleEl = document.querySelector('title');
+  if (titleEl) titleObserver.observe(titleEl, { childList: true, characterData: true, subtree: true });
+
   // SPA route changes have no navigation event we can rely on: poll the path.
   intervals.push(setInterval(guard(() => {
     if (location.pathname !== lastPath) {
@@ -78,14 +113,12 @@
     }
   }), BBD.ROUTE_POLL_MS));
 
-  // Regular PnL + intel + banner + guard refresh.
+  // Fallback poll — time-based state (snooze expiry, refire windows) advances
+  // with no page mutation, and a quiet page must still get a periodic look.
+  // Coalesces through the same queue as the event path.
   intervals.push(setInterval(guard(() => {
     ensureRefreshBtn();
-    BBD.pnl.scan();
-    BBD.intel.scan();
-    BBD.banner.tick();
-    BBD.plans.tick();
-    BBD.guard.tick();
+    queueLightTick();
   }), BBD.POLL_MS));
 
   // React immediately when settings change from the popup.

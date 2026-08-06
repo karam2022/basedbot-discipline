@@ -202,6 +202,15 @@ permission, so it cannot run on or affect any other site. Permissions:
 you configure a bot). No wallet access, no keys, no transactions. The source is
 small and unminified — read it.
 
+**No shipped keys, ever.** An extension bundle is public: anyone can unzip it
+and read every string, which is how hardcoded credentials in several
+multi-million-user extensions have become public credentials. This extension
+ships zero API keys — everything it reads works keyless, and the one secret
+involved (your Telegram bot token) is typed by you, lives in your own
+`chrome.storage.local`, and never appears in the repo or the bundle. If a
+future feature can't work without a shipped key, the feature is wrong, not the
+rule.
+
 ## Contributing
 
 PRs welcome. See [CONTRIBUTING.md](CONTRIBUTING.md). The one hard line: no
