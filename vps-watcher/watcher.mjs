@@ -360,7 +360,7 @@ const scanCooldown = (addr) => {
 };
 
 let hooksLatest = []; // last scored list, for /hooks
-const hooksWatch = async () => {
+const hooksWatch = async (silent = true) => {
   if (!HOOKS_ENABLED) return;
   try {
     const res = await fetch(HOOKS_FEED);
@@ -371,7 +371,7 @@ const hooksWatch = async () => {
     let sent = 0;
     for (const h of hooksLatest) {
       const key = `hook:${h.address}`;
-      if (seen[key] || sent >= 3) continue; // cap per run — no first-run flood
+      if (silent || seen[key] || sent >= 3) continue; // cap per run — no first-run flood
       seen[key] = { ts: Date.now() };
       sent += 1;
       await sendTelegram(
@@ -643,7 +643,7 @@ const pollUpdatesInner = async () => {
         continue;
       }
       if (cmd === '/hooks') {
-        if (!hooksLatest.length) await hooksWatch();
+        if (!hooksLatest.length) await hooksWatch(true);
         const named = hooksLatest.length
           ? `🪝 Named movers (ETH mainnet, via v4hooks.org):\n` + hooksLatest.slice(0, 5)
             .map((h) => `${h.status === 'accelerating' ? '▲' : '·'} ${h.name}${h.verified ? ' ✓' : ''} — ${h.pools} pools · ${h.status} · ${h.ageDays}d\n  etherscan.io/address/${h.address}`)
@@ -1917,9 +1917,14 @@ setInterval(exitWatch, EXIT_CHECK_MS);
 setTimeout(refreshMajors, 20 * 1000);
 setInterval(refreshMajors, 24 * 3600 * 1000);
 if (ALPHA_ENABLED) { setTimeout(alphaWatch, 120 * 1000); setInterval(alphaWatch, ALPHA_CHECK_MS); }
-if (HOOKS_ENABLED) {
-  setTimeout(hooksWatch, 90 * 1000);
-  setInterval(hooksWatch, HOOKS_CHECK_MS);
+// Hook alerting is OFF. Scanning PoolManager for new hook contracts surfaced
+// deployments, not projects: factory vanity addresses, and "buyers present"
+// pools that were 79% sells. What Karam actually wanted — a token whose own
+// pitch is a hook mechanism — is the 🪝 narrative tag on real listings, which
+// lives in the alert path and is unaffected. /hooks still answers on demand.
+if (HOOKS_ENABLED && config.hookAlerts === true) {
+  setTimeout(() => hooksWatch(false), 90 * 1000);
+  setInterval(() => hooksWatch(false), HOOKS_CHECK_MS);
   setTimeout(onchainHooksScan, 150 * 1000);
   setInterval(onchainHooksScan, HOOK_SCAN_MS);
 }
