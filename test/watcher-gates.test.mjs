@@ -94,3 +94,20 @@ assert.equal(tierOf({ safe: true, kw: false, website: false, score: 1, ageMin: 9
 // real turnover missing → not a gem even if old and mid-cap
 assert.equal(tierOf({ safe: true, kw: false, website: true, score: 1, ageMin: 90, mc: 120000, vol: 200 }), null);
 console.log('gem substance: 4/4 ✓');
+
+// ---- radar: real account age, decoded from the X snowflake id --------------
+const X_EPOCH_MS = 1288834974657n;
+const createdMs = (id) => {
+  const str = String(id || '');
+  if (!/^\d+$/.test(str)) return null;
+  if (str.length < 17) return 0;
+  return Number((BigInt(str) >> 22n) + X_EPOCH_MS);
+};
+const ageDays = (id) => (Date.now() - createdMs(id)) / 86400000;
+// a genuinely new account (klik_bot, created the day it surfaced)
+assert.ok(ageDays('2085119518449565696') < 60, 'snowflake id decodes to a recent date');
+// Cointelegraph-era ids predate snowflake entirely
+assert.equal(createdMs('1333467482'), 0, 'short id = pre-snowflake = ancient');
+assert.ok(ageDays('1333467482') > 5000, 'and therefore far outside the window');
+assert.equal(createdMs('not-a-number'), null, 'unparseable ids are skipped, never guessed');
+console.log('radar account age: 4/4 ✓');

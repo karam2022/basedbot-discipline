@@ -1073,7 +1073,20 @@ const ALPHA_PATH = join(ROOT, 'alpha-seen.json');
 const ALPHA_FEED = config.alphaFeedUrl || 'https://purealpha.app/api/feed?feed=new';
 const ALPHA_CHECK_MS = (config.alphaCheckMin || 15) * 60 * 1000;
 const ALPHA_ENABLED = config.alphaWatch !== false;
-const ALPHA_MIN_FOL = config.alphaMinFollowers || 500;
+const ALPHA_MIN_FOL = config.alphaMinFollowers || 150;
+// purealpha's "new" means new TO THEM, which is how Cointelegraph (2013) and
+// Wu Blockchain reached the radar. X user ids are snowflakes that encode the
+// account's creation time, so actual novelty is decodable rather than guessed.
+// Short ids predate snowflake entirely — those accounts are ancient by
+// definition.
+const ALPHA_MAX_ACCOUNT_AGE_DAYS = config.alphaMaxAccountAgeDays || 60;
+const X_EPOCH_MS = 1288834974657n;
+const accountCreatedMs = (id) => {
+  const str = String(id || '');
+  if (!/^\d+$/.test(str)) return null;
+  if (str.length < 17) return 0;          // pre-snowflake: created before ~2013
+  try { return Number((BigInt(str) >> 22n) + X_EPOCH_MS); } catch (e) { return null; }
+};
 const ALPHA_MAX_PER_RUN = config.alphaMaxPerRun || 3;
 
 const alphaWatch = async () => {
@@ -1090,6 +1103,14 @@ const alphaWatch = async () => {
       if (!handle || seen[handle.toLowerCase()]) continue;
       // Projects only: a person's account is not something you can act on.
       if (row.kind !== 'project') continue;
+      // Genuinely new, decoded from the account id — not merely new to purealpha.
+      const createdMs = accountCreatedMs(row.id);
+      if (createdMs === null) continue;                 // unparseable id: skip rather than guess
+      const accountAgeDays = (Date.now() - createdMs) / 86400000;
+      if (accountAgeDays > ALPHA_MAX_ACCOUNT_AGE_DAYS) {
+        seen[handle.toLowerCase()] = { ts: Date.now(), skipped: 'established account' };
+        continue;
+      }
       const fol = Number(row.fol) || 0;
       if (fol < ALPHA_MIN_FOL) continue;               // too small to mean anything yet
       seen[handle.toLowerCase()] = { ts: Date.now(), fol };
@@ -1110,7 +1131,8 @@ const alphaWatch = async () => {
         '🐦 <b>NEW PROJECT ON THE RADAR</b>',
         `<b>${esc(row.name || handle)}</b>  ·  <a href="https://x.com/${encodeURIComponent(handle)}">@${esc(handle)}</a>`,
         row.summary ? `\n<blockquote>${esc(String(row.summary).slice(0, 220))}</blockquote>` : '',
-        `\n${growthTree}`,
+        `\n🗓 account created <b>${accountAgeDays < 1 ? 'today' : accountAgeDays < 2 ? 'yesterday' : Math.round(accountAgeDays) + ' days ago'}</b>`,
+        growthTree,
         bios ? `🏷 <i>${esc(bios)}</i>` : '',
         said.length
           ? `\n💬 <b>what people are saying</b>\n<blockquote expandable>${said.join('\n\n')}</blockquote>`
